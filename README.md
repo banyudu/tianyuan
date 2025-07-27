@@ -7,7 +7,7 @@ A TypeScript tool that converts complex Excel files from the format "建设工�
 This tool processes construction engineering standards Excel files and extracts data into three structured output files:
 
 1. **子目信息.xls** - Subitem information table
-2. **工作内容、附注信息表.xls** - Work content and notes table  
+2. **工作内容、附注信息表.xls** - Work content and notes table
 3. **含量表.xls** - Material consumption table
 
 ## Features
@@ -36,10 +36,7 @@ pnpm run start
 import { ExcelConverter } from './converter';
 
 const converter = new ExcelConverter();
-await converter.convert(
-    'data/建设工程消耗量标准及计算规则（安装工程） 补充子目.xlsx',
-    'output'
-);
+await converter.convert('data/建设工程消耗量标准及计算规则（安装工程） 补充子目.xlsx', 'output');
 ```
 
 ### Command Line
@@ -62,19 +59,22 @@ The input Excel file contains:
 ## Output Files
 
 ### 1. 子目信息.xls (Subitem Information)
-| 子目编号 | 子目名称 | 计量单位 | 工作内容 |
-|----------|----------|----------|----------|
-| 1B-1     | 减振装置安装 | 个 | 安装、调试 |
+
+| 子目编号 | 子目名称     | 计量单位 | 工作内容   |
+| -------- | ------------ | -------- | ---------- |
+| 1B-1     | 减振装置安装 | 个       | 安装、调试 |
 
 ### 2. 工作内容、附注信息表.xls (Work Content)
-| 编号 | 名称 | 工作内容 | 计量单位 | 备注 |
-|------|------|----------|----------|------|
-| WC-1 | 阀门安装 | 安装、水压试验 | 个 | |
+
+| 编号 | 名称     | 工作内容       | 计量单位 | 备注 |
+| ---- | -------- | -------------- | -------- | ---- |
+| WC-1 | 阀门安装 | 安装、水压试验 | 个       |      |
 
 ### 3. 含量表.xls (Material Consumption)
+
 | 子目编号 | 材料名称 | 计量单位 | 消耗量 | 类别 |
-|----------|----------|----------|--------|------|
-| 1B-1     | 螺纹法兰 | 个 | 2 | 材料 |
+| -------- | -------- | -------- | ------ | ---- |
+| 1B-1     | 螺纹法兰 | 个       | 2      | 材料 |
 
 ## Technical Implementation
 
@@ -82,26 +82,26 @@ The input Excel file contains:
 
 ```typescript
 interface SubitemInfo {
-    code: string;           // 子目编号 (e.g., "1B-1")
-    name: string;           // 子目名称
-    unit: string;           // 计量单位
-    workContent?: string;   // 工作内容
+  code: string; // 子目编号 (e.g., "1B-1")
+  name: string; // 子目名称
+  unit: string; // 计量单位
+  workContent?: string; // 工作内容
 }
 
 interface WorkContent {
-    code: string;           // 编号
-    name: string;           // 名称
-    workContent: string;    // 工作内容
-    unit: string;           // 计量单位
-    notes?: string;         // 备注
+  code: string; // 编号
+  name: string; // 名称
+  workContent: string; // 工作内容
+  unit: string; // 计量单位
+  notes?: string; // 备注
 }
 
 interface MaterialContent {
-    subitemCode: string;    // 子目编号
-    materialName: string;   // 材料名称
-    unit: string;           // 计量单位
-    quantity: number;       // 消耗量
-    category: string;       // 类别 (人工/材料/机械)
+  subitemCode: string; // 子目编号
+  materialName: string; // 材料名称
+  unit: string; // 计量单位
+  quantity: number; // 消耗量
+  category: string; // 类别 (人工/材料/机械)
 }
 ```
 
@@ -115,6 +115,7 @@ interface MaterialContent {
 ## Analysis Results
 
 Successfully analyzed input file with:
+
 - **839 rows** and **32 columns** of data
 - **386 material items** extracted
 - **Multiple data sections** identified and processed

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+output/
+data/
+*.log
+*.xls
+*.xlsx
+*.md
+package-lock.json
+pnpm-lock.yaml

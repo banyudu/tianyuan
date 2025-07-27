@@ -1,3 +1,76 @@
 ---
 alwaysApply: true
 ---
+
+# Excel File Conversion Tool - Project Rules
+
+## Project Overview
+This is a TypeScript tool for converting complex Excel files from construction engineering standards format to structured output files. The tool processes hierarchical data with merged cells and extracts information into three separate Excel files.
+
+## Code Style & Standards
+
+### TypeScript/JavaScript
+- Use 2-space indentation for all TS/JS files
+- Use meaningful variable and function names in English
+- Prefer async/await over Promises
+- Use proper TypeScript types and interfaces
+- Handle errors gracefully with try-catch blocks
+- Add JSDoc comments for public methods and complex functions
+
+### File Organization
+- Keep utility functions in separate modules
+- Use descriptive file names that reflect their purpose
+- Organize imports: external libraries first, then local imports
+- Export interfaces and types explicitly
+
+### Excel Processing Guidelines
+- Always handle cell values that might be rich text, formulas, or shared strings
+- Use the `getCellValue()` helper function consistently for cell value extraction
+- Handle merged cells appropriately when parsing hierarchical data
+- Test with edge cases like empty cells, different cell types, and format variations
+
+### Data Extraction Rules
+- Use regex patterns for consistent data identification (codes, units, etc.)
+- Validate extracted data before adding to collections
+- Log extraction progress and statistics for debugging
+- Handle Chinese text encoding properly
+
+### Error Handling
+- Wrap file operations in try-catch blocks
+- Provide meaningful error messages with context
+- Log errors with sufficient detail for debugging
+- Gracefully handle missing or malformed data
+
+## Project-Specific Guidelines
+
+### Pattern Recognition
+- Subitem codes follow pattern: `[0-9]+[A-Z]+-[0-9]+` (e.g., "1B-1", "2A-3")
+- Units are typically short strings: `个|台|套|m|kg|只|根|块|张|副|m²|m³`
+- Chinese text requires special handling for encoding and length checks
+
+### Output File Format
+- Generate Excel files (.xls) matching the reference format exactly
+- Use consistent column headers in Chinese
+- Ensure proper data types in output cells
+- Maintain data relationships between the three output files
+
+### Testing & Validation
+- Test with the provided input file format
+- Validate output against reference files in `data/补充子目/`
+- Handle variations in merged cell patterns
+- Test edge cases like missing data or format changes
+
+## Development Workflow
+- Run analysis scripts before making extraction changes
+- Test conversion on full input file after modifications
+- Update documentation when adding new features
+- Clean up temporary analysis files after development
+
+## Dependencies
+- Use `exceljs` for Excel file operations
+- Prefer `pnpm` over npm for package management
+- Keep TypeScript strict mode enabled
+- Use `tsx` for running TypeScript files directly
+
+- Keep TypeScript strict mode enabled
+- Use `tsx` for running TypeScript files directly

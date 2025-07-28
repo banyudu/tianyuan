@@ -1,152 +1,126 @@
-# Excel File Conversion Tool
+# Excel转换器
 
-A TypeScript tool that converts complex Excel files from the format "建设工程消耗量标准及计算规则（安装工程） 补充子目.xlsx" to a structured directory format with 3 separate Excel files.
+这个项目用于将通过WPS OCR识别的Excel文件转换为标准格式的多个Excel文件。
 
-## Overview
+## 项目背景
 
-This tool processes construction engineering standards Excel files and extracts data into three structured output files:
+- **输入**：通过WPS OCR识别PDF得到的Excel文件，包含大量合并单元格和边框信息
+- **输出**：标准化的多个Excel文件（子目信息、含量表、工作内容_附注信息）
+- **关键特点**：利用边框样式识别真实表格区域，保持数据完整性
 
-1. **子目信息.xls** - Subitem information table
-2. **工作内容、附注信息表.xls** - Work content and notes table
-3. **含量表.xls** - Material consumption table
+## 文件结构
 
-## Features
+```
+src/
+├── types.ts          # 类型定义
+├── excel-analyzer.ts # Excel文件分析器
+├── data-extractor.ts # 数据提取器
+├── file-exporter.ts  # 文件导出器
+└── index.ts          # 主入口文件
 
-- ✅ **Smart Excel Parsing**: Handles complex merged cells and hierarchical data structures
-- ✅ **Multi-section Data Extraction**: Automatically identifies and extracts different data types
-- ✅ **Pattern Recognition**: Uses regex patterns to identify codes, units, and content types
-- ✅ **Robust Error Handling**: Gracefully handles variations in input file structure
-- ✅ **TypeScript**: Fully typed for better maintainability and reliability
+sample/
+├── input.xlsx        # 示例输入文件
+└── output/           # 示例输出文件（CSV格式）
+    ├── 附注信息.csv
+    ├── 工作内容.csv
+    ├── 子目信息.csv
+    └── 含量表.csv
+```
 
-## Installation
+## 使用方法
+
+### 1. 安装依赖
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Run the converter
-pnpm run start
+npm install
 ```
 
-## Usage
-
-### Basic Usage
-
-```typescript
-import { ExcelConverter } from './converter';
-
-const converter = new ExcelConverter();
-await converter.convert('data/建设工程消耗量标准及计算规则（安装工程） 补充子目.xlsx', 'output');
-```
-
-### Command Line
+### 2. 运行转换脚本
 
 ```bash
-# Run the converter directly
-tsx converter.ts
+npm start src/index.ts
 ```
 
-## Input File Structure
+或者使用tsx直接运行：
 
-The input Excel file contains:
-
-- **Table of Contents**: Chapter and section listings with page numbers
-- **Subitem Codes**: Alphanumeric codes like "1B-1", "2A-3", etc.
-- **Work Content**: Detailed descriptions of work processes and procedures
-- **Material Lists**: Construction materials with specifications and quantities
-- **Merged Cells**: Complex hierarchical table structures
-
-## Output Files
-
-### 1. 子目信息.xls (Subitem Information)
-
-| 子目编号 | 子目名称     | 计量单位 | 工作内容   |
-| -------- | ------------ | -------- | ---------- |
-| 1B-1     | 减振装置安装 | 个       | 安装、调试 |
-
-### 2. 工作内容、附注信息表.xls (Work Content)
-
-| 编号 | 名称     | 工作内容       | 计量单位 | 备注 |
-| ---- | -------- | -------------- | -------- | ---- |
-| WC-1 | 阀门安装 | 安装、水压试验 | 个       |      |
-
-### 3. 含量表.xls (Material Consumption)
-
-| 子目编号 | 材料名称 | 计量单位 | 消耗量 | 类别 |
-| -------- | -------- | -------- | ------ | ---- |
-| 1B-1     | 螺纹法兰 | 个       | 2      | 材料 |
-
-## Technical Implementation
-
-### Data Models
-
-```typescript
-interface SubitemInfo {
-  code: string; // 子目编号 (e.g., "1B-1")
-  name: string; // 子目名称
-  unit: string; // 计量单位
-  workContent?: string; // 工作内容
-}
-
-interface WorkContent {
-  code: string; // 编号
-  name: string; // 名称
-  workContent: string; // 工作内容
-  unit: string; // 计量单位
-  notes?: string; // 备注
-}
-
-interface MaterialContent {
-  subitemCode: string; // 子目编号
-  materialName: string; // 材料名称
-  unit: string; // 计量单位
-  quantity: number; // 消耗量
-  category: string; // 类别 (人工/材料/机械)
-}
+```bash
+npx tsx src/index.ts
 ```
 
-### Processing Pipeline
+### 3. 检查输出
 
-1. **Load & Analyze**: Parse Excel file and identify section boundaries
-2. **Extract Data**: Use pattern matching to extract structured data
-3. **Transform**: Organize data into three categories
-4. **Generate**: Create output Excel files with proper formatting
+转换完成后，在 `output/` 目录下会生成两个子目录：
 
-## Analysis Results
+- `output/csv/` - CSV格式文件（用于调试验证）
+- `output/excel/` - Excel格式文件（最终输出）
 
-Successfully analyzed input file with:
+## 输出文件说明
 
-- **839 rows** and **32 columns** of data
-- **386 material items** extracted
-- **Multiple data sections** identified and processed
-- **Complex merged cell structures** handled
+### Excel格式输出
 
-## Future Enhancements
+1. **工作内容_附注信息.xlsx** - 包含两个工作表：
+   - 工作内容（编号，工作内容）
+   - 附注信息（编号，附注信息）
 
-- [ ] Improve subitem extraction for complex merged cells
-- [ ] Add support for additional input file variations
-- [ ] Implement data validation and quality checks
-- [ ] Add configuration options for different extraction patterns
-- [ ] Support for batch processing multiple files
+2. **子目信息.xlsx** - 子目信息表：
+   - 包含层级结构（用$符号表示）
+   - 定额号、子目名称、基价、人工、材料、机械、管理费、利润等
 
-## Dependencies
+3. **含量表.xlsx** - 材料含量表：
+   - 编号、名称、规格、单位、单价、含量、主材标记等
 
-- `exceljs`: Excel file parsing and generation
-- `typescript`: Type safety and modern JavaScript features
-- `tsx`: TypeScript execution
+### 数据格式
 
-## Files Structure
+所有输出数据都严格按照 `src/types.ts` 中定义的接口格式进行结构化。
 
-```
-├── converter.ts              # Main conversion logic
-├── plans.md                  # Project planning document
-├── analyze-detailed.ts       # Detailed file analysis
-├── find-data-sections.ts     # Section boundary detection
-├── data/                     # Input files
-├── output/                   # Generated output files
-└── README.md                 # This file
-```
+## 核心功能
 
-## License
+### 1. 边框识别
 
-ISC License
+- 利用Excel单元格的边框样式识别真实表格区域
+- 处理OCR识别导致的合并单元格问题
+- 自动分离不同的数据表格
+
+### 2. 数据提取
+
+- 智能识别四种数据类型：附注信息、工作内容、子目信息、含量表
+- 处理层级结构（$, $$, $$$, $$$$标识）
+- 数据类型自动转换和验证
+
+### 3. 格式转换
+
+- 支持CSV和Excel两种输出格式
+- 保持数据完整性，严格按照原格式要求
+- 自动处理特殊字符和编码问题
+
+## 开发说明
+
+### 主要类
+
+- **ExcelAnalyzer**: 分析Excel文件结构，识别边框区域
+- **DataExtractor**: 提取并结构化不同类型的数据
+- **FileExporter**: 导出CSV和Excel格式文件
+
+### 扩展说明
+
+如果需要处理不同格式的输入文件，主要需要修改：
+
+1. `excel-analyzer.ts` 中的区域识别逻辑
+2. `data-extractor.ts` 中的数据解析规则
+3. `types.ts` 中的数据结构定义
+
+## 注意事项
+
+- 确保输入文件路径正确（默认为 `sample/input.xlsx`）
+- 转换过程中会在控制台显示详细的处理日志
+- 如果识别效果不理想，可以调整边框识别的阈值参数
+- 数据严格按照既定格式，不允许随意篡改
+
+## 故障排除
+
+如果转换失败，请检查：
+
+1. 输入文件是否存在且格式正确
+2. 文件是否包含预期的边框信息
+3. 控制台输出的错误信息
+4. 确保有足够的文件写入权限

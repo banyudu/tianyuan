@@ -688,14 +688,9 @@ export class ExcelAnalyzer {
           const str = String(value).trim();
           if (/^\d+[A-Z]-\d+$/.test(str)) {
             quotaCode = str;
-            // 尝试从下一列获取名称
-            if (col + 1 <= this.worksheet.columnCount) {
-              const nameCellInfo = this.getCellInfo(row, col + 1);
-              const nameValue = this.processExcelValue(nameCellInfo.value);
-              if (nameValue && typeof nameValue === 'string') {
-                quotaName = String(nameValue).trim();
-              }
-            }
+
+            // 更智能的名称提取：在定额编号周围搜索名称
+            quotaName = this.findQuotaName(row, col);
 
             // 尝试从后续列提取价格数据
             priceData = this.extractPriceData(row, col);
@@ -996,6 +991,27 @@ export class ExcelAnalyzer {
     const materialList: any[] = [];
     let debugCount = 0;
 
+    // 方法1: 基于"人 材 机 名 称"表头提取
+    materialList.push(...this.extractMaterialsByHeader());
+
+    // 方法2: 基于定额编号周围的数据提取
+    materialList.push(...this.extractMaterialsAroundQuotaCodes());
+
+    // 方法3: 基于边框区域提取
+    materialList.push(...this.extractMaterialsFromBorderedRegions());
+
+    // 去重处理
+    const uniqueMaterials = this.deduplicateMaterials(materialList);
+
+    console.log(`DEBUG: 总共找到 ${uniqueMaterials.length} 条材料数据`);
+    return uniqueMaterials;
+  }
+
+  // 方法1: 基于"人 材 机 名 称"表头提取
+  private extractMaterialsByHeader(): any[] {
+    const materialList: any[] = [];
+    let debugCount = 0;
+
     for (let row = 1; row <= this.worksheet.rowCount; row++) {
       const rowData: string[] = [];
 
@@ -1008,14 +1024,15 @@ export class ExcelAnalyzer {
       const rowText = rowData.join(' ');
 
       // 查找包含"人 材 机 名 称"的行，这通常是材料表的开始
-      if (rowText.includes('人 材 机 名 称') || rowText.includes('人材机名称')) {
+      if (rowText.includes('人 材 机 名 称') || rowText.includes('人材机名称') ||
+          rowText.includes('人工') && rowText.includes('材料') && rowText.includes('机械')) {
         console.log(`DEBUG: 找到材料表头行 ${row}: ${rowText.substring(0, 100)}...`);
 
         // 从下一行开始提取材料数据，直到遇到下一个表头或空行
-        for (let dataRow = row + 1; dataRow <= Math.min(row + 50, this.worksheet.rowCount); dataRow++) {
+        for (let dataRow = row + 1; dataRow <= Math.min(row + 100, this.worksheet.rowCount); dataRow++) {
           const dataRowData: string[] = [];
 
-          for (let col = 1; col <= Math.min(20, this.worksheet.columnCount); col++) {
+          for (let col = 1; col <= Math.min(25, this.worksheet.columnCount); col++) {
             const cellInfo = this.getCellInfo(dataRow, col);
             const value = this.processExcelValue(cellInfo.value);
             dataRowData.push(String(value || ''));
@@ -1024,65 +1041,32 @@ export class ExcelAnalyzer {
           const dataRowText = dataRowData.join(' ');
 
           // 如果遇到下一个表头或空行，停止提取
-          if (dataRowText.includes('人 材 机 名 称') || dataRowText.trim() === '') {
+          if (dataRowText.includes('人 材 机 名 称') || dataRowText.includes('人材机名称') ||
+              dataRowText.trim() === '' || dataRowText.includes('工作内容') ||
+              dataRowText.includes('注 :') || dataRowText.includes('子目')) {
             break;
           }
 
           // 检查是否是有效的材料数据行
-          // 材料数据通常有：类别标签（人工/材料/机械）、材料名称、单位、数量等信息
-          if (dataRowData.length >= 3 && dataRowData[0] && dataRowData[1]) {
+          if (dataRowData.length >= 2 && dataRowData[0] && dataRowData[1]) {
             const category = String(dataRowData[0]).trim();
             const materialName = String(dataRowData[1]).trim();
 
-            // 检查是否是有效的材料数据（有类别标签和材料名称）
-            if (category && materialName &&
-                (category === '人工' || category === '材料' || category === '机械') &&
-                materialName !== '人 材 机 名 称' &&
-                !materialName.includes('人') &&
-                !materialName.includes('材') &&
-                !materialName.includes('机') &&
-                !materialName.includes('工作内容') &&
-                !materialName.includes('注 :') &&
-                !materialName.includes('子目') &&
-                !materialName.includes('编号') &&
-                !materialName.includes('名称') &&
-                !materialName.includes('单位') &&
-                !materialName.includes('消耗量') &&
-                !materialName.includes('第') &&
-                !materialName.includes('节') &&
-                !materialName.includes('章') &&
-                !materialName.includes('续表') &&
-                !materialName.includes('综合用工') &&
-                !materialName.includes('载重汽车') &&
-                !materialName.includes('船舶') &&
-                !materialName.includes('医院灯具') &&
-                !materialName.includes('路灯') &&
-                !materialName.includes('太阳能') &&
-                !materialName.includes('电缆') &&
-                !materialName.includes('防爆钢管') &&
-                !materialName.includes('配管工程') &&
-                !materialName.includes('穿铁丝') &&
-                materialName.length > 1 &&
-                materialName.length < 100) {
+            // 更宽松的材料数据识别条件
+            if (category && materialName && materialName.length > 1 && materialName.length < 100 &&
+                (category === '人工' || category === '材料' || category === '机械' ||
+                 category === '综合用工' || category === '载重汽车' || category === '船舶' ||
+                 this.isValidMaterialCategory(category)) &&
+                // 过滤掉子目名称和其他非材料内容
+                !this.isSubItemName(materialName) &&
+                !this.isSectionHeader(materialName) &&
+                !this.isUnitHeader(materialName)) {
 
               debugCount++;
               console.log(`DEBUG: 找到材料数据 ${dataRow}: ${category} - ${materialName}`);
 
               // 向上查找最近的定额编号
-              let nearestCode = '';
-              for (let searchRow = dataRow - 1; searchRow >= Math.max(1, dataRow - 20); searchRow--) {
-                for (let col = 1; col <= this.worksheet.columnCount; col++) {
-                  const cellInfo = this.getCellInfo(searchRow, col);
-                  const value = this.processExcelValue(cellInfo.value);
-                  const str = String(value || '').trim();
-
-                  if (/^\d+[A-Z]-\d+$/.test(str)) {
-                    nearestCode = str;
-                    break;
-                  }
-                }
-                if (nearestCode) break;
-              }
+              let nearestCode = this.findNearestQuotaCode(dataRow);
 
               // 提取更完整的材料信息
               const materialInfo = this.extractMaterialInfo(dataRowData, category);
@@ -1092,16 +1076,8 @@ export class ExcelAnalyzer {
 
               for (const singleMaterialName of materialNames) {
                 if (singleMaterialName && singleMaterialName.length > 1 && singleMaterialName.length < 50) {
-                  debugCount++;
-                  console.log(`DEBUG: 找到材料数据 ${dataRow}: ${category} - ${singleMaterialName}`);
-
                   // 确定材料类别
-                  let 材料类别 = 2; // 默认为材料
-                  if (category === '人工') {
-                    材料类别 = 1; // 人工
-                  } else if (category === '机械') {
-                    材料类别 = 3; // 机械
-                  }
+                  let 材料类别 = this.determineMaterialCategory(category);
 
                   // 确定主材标记
                   const 主材标记 = 材料类别 === 2 && this.isMainMaterial(singleMaterialName);
@@ -1126,8 +1102,219 @@ export class ExcelAnalyzer {
       }
     }
 
-    console.log(`DEBUG: 总共找到 ${debugCount} 条材料数据`);
+    console.log(`DEBUG: 方法1找到 ${debugCount} 条材料数据`);
     return materialList;
+  }
+
+  // 方法2: 基于定额编号周围的数据提取
+  private extractMaterialsAroundQuotaCodes(): any[] {
+    const materialList: any[] = [];
+    let debugCount = 0;
+
+    for (let row = 1; row <= this.worksheet.rowCount; row++) {
+      // 查找定额编号
+      for (let col = 1; col <= this.worksheet.columnCount; col++) {
+        const cellInfo = this.getCellInfo(row, col);
+        const value = this.processExcelValue(cellInfo.value);
+        const str = String(value || '').trim();
+
+        if (/^\d+[A-Z]-\d+$/.test(str)) {
+          // 在定额编号周围查找材料数据
+          for (let searchRow = Math.max(1, row - 10); searchRow <= Math.min(this.worksheet.rowCount, row + 20); searchRow++) {
+            const searchRowData: string[] = [];
+
+            for (let searchCol = 1; searchCol <= Math.min(25, this.worksheet.columnCount); searchCol++) {
+              const searchCellInfo = this.getCellInfo(searchRow, searchCol);
+              const searchValue = this.processExcelValue(searchCellInfo.value);
+              searchRowData.push(String(searchValue || ''));
+            }
+
+            // 检查是否是材料数据行
+            if (searchRowData.length >= 3 && searchRowData[0] && searchRowData[1]) {
+              const category = String(searchRowData[0]).trim();
+              const materialName = String(searchRowData[1]).trim();
+
+              if (category && materialName && materialName.length > 1 && materialName.length < 100 &&
+                  (category === '人工' || category === '材料' || category === '机械' ||
+                   category === '综合用工' || category === '载重汽车' || category === '船舶' ||
+                   this.isValidMaterialCategory(category)) &&
+                  // 过滤掉子目名称和其他非材料内容
+                  !this.isSubItemName(materialName) &&
+                  !this.isSectionHeader(materialName) &&
+                  !this.isUnitHeader(materialName) &&
+                  !this.isTableHeader(materialName) &&
+                  this.isValidMaterial(materialName)) {
+
+                debugCount++;
+                console.log(`DEBUG: 定额周围找到材料数据 ${searchRow}: ${category} - ${materialName}`);
+
+                // 提取材料信息
+                const materialInfo = this.extractMaterialInfo(searchRowData, category);
+
+                // 确定材料类别
+                let 材料类别 = this.determineMaterialCategory(category);
+
+                // 确定主材标记
+                const 主材标记 = 材料类别 === 2 && this.isMainMaterial(materialName);
+
+                materialList.push({
+                  编号: str,
+                  名称: materialName,
+                  规格: materialInfo.规格,
+                  单位: materialInfo.单位,
+                  单价: materialInfo.单价,
+                  含量: materialInfo.含量,
+                  主材标记: 主材标记,
+                  材料号: materialInfo.材料号,
+                  材料类别: 材料类别,
+                  是否有明细: materialInfo.是否有明细
+                });
+              }
+            }
+          }
+          break; // 找到一个定额编号后继续下一行
+        }
+      }
+    }
+
+    console.log(`DEBUG: 方法2找到 ${debugCount} 条材料数据`);
+    return materialList;
+  }
+
+  // 方法3: 基于边框区域提取
+  private extractMaterialsFromBorderedRegions(): any[] {
+    const materialList: any[] = [];
+    let debugCount = 0;
+
+    // 扫描有边框的区域
+    for (let row = 1; row <= this.worksheet.rowCount; row++) {
+      for (let col = 1; col <= this.worksheet.columnCount; col++) {
+        const cellInfo = this.getCellInfo(row, col);
+
+        // 如果是有边框的单元格，检查是否是材料表
+        if (this.hasBorder(cellInfo)) {
+          const regionData = this.getRegionDataAroundCell(row, col);
+
+          // 检查区域是否包含材料数据
+          for (const dataRow of regionData) {
+            if (dataRow.length >= 3 && dataRow[0] && dataRow[1]) {
+              const category = String(dataRow[0]).trim();
+              const materialName = String(dataRow[1]).trim();
+
+              if (category && materialName && materialName.length > 1 && materialName.length < 100 &&
+                  (category === '人工' || category === '材料' || category === '机械' ||
+                   category === '综合用工' || category === '载重汽车' || category === '船舶' ||
+                   this.isValidMaterialCategory(category)) &&
+                  // 过滤掉子目名称和其他非材料内容
+                  !this.isSubItemName(materialName) &&
+                  !this.isSectionHeader(materialName) &&
+                  !this.isUnitHeader(materialName) &&
+                  !this.isTableHeader(materialName) &&
+                  this.isValidMaterial(materialName)) {
+
+                debugCount++;
+                console.log(`DEBUG: 边框区域找到材料数据: ${category} - ${materialName}`);
+
+                // 提取材料信息
+                const materialInfo = this.extractMaterialInfo(dataRow, category);
+
+                // 确定材料类别
+                let 材料类别 = this.determineMaterialCategory(category);
+
+                // 确定主材标记
+                const 主材标记 = 材料类别 === 2 && this.isMainMaterial(materialName);
+
+                materialList.push({
+                  编号: '',
+                  名称: materialName,
+                  规格: materialInfo.规格,
+                  单位: materialInfo.单位,
+                  单价: materialInfo.单价,
+                  含量: materialInfo.含量,
+                  主材标记: 主材标记,
+                  材料号: materialInfo.材料号,
+                  材料类别: 材料类别,
+                  是否有明细: materialInfo.是否有明细
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`DEBUG: 方法3找到 ${debugCount} 条材料数据`);
+    return materialList;
+  }
+
+  // 辅助方法：查找最近的定额编号
+  private findNearestQuotaCode(row: number): string {
+    for (let searchRow = row - 1; searchRow >= Math.max(1, row - 20); searchRow--) {
+      for (let col = 1; col <= this.worksheet.columnCount; col++) {
+        const cellInfo = this.getCellInfo(searchRow, col);
+        const value = this.processExcelValue(cellInfo.value);
+        const str = String(value || '').trim();
+
+        if (/^\d+[A-Z]-\d+$/.test(str)) {
+          return str;
+        }
+      }
+    }
+    return '';
+  }
+
+  // 辅助方法：判断是否为有效的材料类别
+  private isValidMaterialCategory(category: string): boolean {
+    const validCategories = ['人工', '材料', '机械', '综合用工', '载重汽车', '船舶', '工日', '台班'];
+    return validCategories.includes(category) || category.length <= 10;
+  }
+
+  // 辅助方法：确定材料类别
+  private determineMaterialCategory(category: string): number {
+    if (category === '人工' || category === '工日') {
+      return 1; // 人工
+    } else if (category === '机械' || category === '台班') {
+      return 3; // 机械
+    } else {
+      return 2; // 材料
+    }
+  }
+
+  // 辅助方法：获取单元格周围区域的数据
+  private getRegionDataAroundCell(row: number, col: number): string[][] {
+    const regionData: string[][] = [];
+
+    for (let r = Math.max(1, row - 5); r <= Math.min(this.worksheet.rowCount, row + 10); r++) {
+      const rowData: string[] = [];
+
+      for (let c = Math.max(1, col - 5); c <= Math.min(this.worksheet.columnCount, col + 10); c++) {
+        const cellInfo = this.getCellInfo(r, c);
+        const value = this.processExcelValue(cellInfo.value);
+        rowData.push(String(value || ''));
+      }
+
+      if (rowData.some(cell => cell.trim() !== '')) {
+        regionData.push(rowData);
+      }
+    }
+
+    return regionData;
+  }
+
+  // 辅助方法：去重材料数据
+  private deduplicateMaterials(materials: any[]): any[] {
+    const seen = new Set<string>();
+    const uniqueMaterials: any[] = [];
+
+    for (const material of materials) {
+      const key = `${material.编号}-${material.名称}-${material.规格}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueMaterials.push(material);
+      }
+    }
+
+    return uniqueMaterials;
   }
 
   // 提取材料详细信息的辅助方法
@@ -1137,7 +1324,7 @@ export class ExcelAnalyzer {
       单位: '',
       单价: 0,
       含量: 0,
-      材料号: undefined,
+      材料号: '',
       是否有明细: false
     };
 
@@ -1149,15 +1336,16 @@ export class ExcelAnalyzer {
     }
 
     // 扫描后续列寻找规格、单位、单价、含量等信息
-    for (let col = 2; col < Math.min(15, dataRowData.length); col++) {
+    for (let col = 2; col < Math.min(20, dataRowData.length); col++) {
       const cellValue = String(dataRowData[col] || '').trim();
 
       if (!cellValue) continue;
 
       // 查找规格（通常包含特殊字符或数字+单位）
       if (!materialInfo.规格 && (cellValue.includes('Φ') || cellValue.includes('×') ||
-          cellValue.includes('～') || cellValue.includes('-') ||
-          /\d+[A-Za-z]/.test(cellValue))) {
+          cellValue.includes('～') || cellValue.includes('-') || cellValue.includes('~') ||
+          cellValue.includes('*') || cellValue.includes('#') ||
+          /\d+[A-Za-z]/.test(cellValue) || /\d+[××]/.test(cellValue))) {
         materialInfo.规格 = cellValue;
       }
 
@@ -1169,7 +1357,7 @@ export class ExcelAnalyzer {
       // 查找单价（数字，可能有小数点）
       if (materialInfo.单价 === 0 && /^\d+\.?\d*$/.test(cellValue)) {
         const numValue = this.parseNumber(cellValue);
-        if (numValue > 0) {
+        if (numValue > 0 && numValue < 1000000) { // 合理的单价范围
           materialInfo.单价 = numValue;
         }
       }
@@ -1177,9 +1365,52 @@ export class ExcelAnalyzer {
       // 查找含量（数字，可能有小数点）
       if (materialInfo.含量 === 0 && /^\d+\.?\d*$/.test(cellValue)) {
         const numValue = this.parseNumber(cellValue);
-        if (numValue > 0) {
+        if (numValue > 0 && numValue < 10000) { // 合理的含量范围
           materialInfo.含量 = numValue;
         }
+      }
+
+      // 查找材料号
+      if (!materialInfo.材料号 && /^[A-Za-z0-9]+$/.test(cellValue) && cellValue.length <= 10) {
+        materialInfo.材料号 = cellValue;
+      }
+    }
+
+    // 如果仍然没有找到单位，尝试从材料名称中推断
+    if (!materialInfo.单位) {
+      const materialName = String(dataRowData[1] || '').trim();
+      if (materialName.includes('kg') || materialName.includes('千克')) {
+        materialInfo.单位 = 'kg';
+      } else if (materialName.includes('m3') || materialName.includes('立方米')) {
+        materialInfo.单位 = 'm3';
+      } else if (materialName.includes('m2') || materialName.includes('平方米')) {
+        materialInfo.单位 = 'm2';
+      } else if (materialName.includes('m') || materialName.includes('米')) {
+        materialInfo.单位 = 'm';
+      } else if (materialName.includes('个') || materialName.includes('件')) {
+        materialInfo.单位 = '个';
+      } else if (materialName.includes('套')) {
+        materialInfo.单位 = '套';
+      } else if (materialName.includes('台')) {
+        materialInfo.单位 = '台';
+      } else if (materialName.includes('根')) {
+        materialInfo.单位 = '根';
+      } else if (materialName.includes('条')) {
+        materialInfo.单位 = '条';
+      } else if (materialName.includes('块')) {
+        materialInfo.单位 = '块';
+      } else if (materialName.includes('组')) {
+        materialInfo.单位 = '组';
+      } else if (materialName.includes('处')) {
+        materialInfo.单位 = '处';
+      } else if (materialName.includes('km')) {
+        materialInfo.单位 = 'km';
+      } else if (materialName.includes('头')) {
+        materialInfo.单位 = '头';
+      } else if (materialName.includes('t') || materialName.includes('吨')) {
+        materialInfo.单位 = 't';
+      } else if (materialName.includes('L') || materialName.includes('升')) {
+        materialInfo.单位 = 'L';
       }
     }
 
@@ -1188,7 +1419,8 @@ export class ExcelAnalyzer {
 
   // 判断是否为单位的辅助方法
   private isUnit(value: string): boolean {
-    const units = ['工日', '台班', 'kg', 'm3', 'm', '个', '套', '台', '根', '条', '块', '组', '处', 'km', '头', 't', 'L', 'm2'];
+    const units = ['工日', '台班', 'kg', 'm3', 'm', '个', '套', '台', '根', '条', '块', '组', '处', 'km', '头', 't', 'L', 'm2',
+                   '千克', '立方米', '平方米', '米', '件', '吨', '升', '公里', '千克', '公斤'];
     return units.includes(value);
   }
 
@@ -1196,5 +1428,88 @@ export class ExcelAnalyzer {
   private isMainMaterial(materialName: string): boolean {
     const mainMaterials = ['钢材', '水泥', '木材', '砖', '砂', '石', '钢筋', '混凝土', '沥青', '管材', '电缆', '电线'];
     return mainMaterials.some(material => materialName.includes(material));
+  }
+
+  // 更智能的名称提取：在定额编号周围搜索名称
+  private findQuotaName(row: number, col: number): string {
+    // 首先尝试从同一行的下一列获取名称
+    if (col + 1 <= this.worksheet.columnCount) {
+      const nextCellInfo = this.getCellInfo(row, col + 1);
+      const nextValue = this.processExcelValue(nextCellInfo.value);
+      if (typeof nextValue === 'string') {
+        const str = nextValue.trim();
+        if (str.length > 3 && str.length < 100 && !/^\d+[A-Z]-\d+$/.test(str) &&
+            !this.isSubItemName(str) && !this.isSectionHeader(str) && !this.isTableHeader(str)) {
+          return str;
+        }
+      }
+    }
+
+    // 然后尝试从同一行的前一列获取名称
+    if (col - 1 >= 1) {
+      const prevCellInfo = this.getCellInfo(row, col - 1);
+      const prevValue = this.processExcelValue(prevCellInfo.value);
+      if (typeof prevValue === 'string') {
+        const str = prevValue.trim();
+        if (str.length > 3 && str.length < 100 && !/^\d+[A-Z]-\d+$/.test(str) &&
+            !this.isSubItemName(str) && !this.isSectionHeader(str) && !this.isTableHeader(str)) {
+          return str;
+        }
+      }
+    }
+
+    // 最后在周围区域搜索
+    const startRow = Math.max(1, row - 3);
+    const endRow = Math.min(this.worksheet.rowCount, row + 3);
+    const startCol = Math.max(1, col - 3);
+    const endCol = Math.min(this.worksheet.columnCount, col + 3);
+
+    for (let r = startRow; r <= endRow; r++) {
+      for (let c = startCol; c <= endCol; c++) {
+        if (r === row && c === col) continue; // 跳过定额编号本身
+
+        const cellInfo = this.getCellInfo(r, c);
+        const value = this.processExcelValue(cellInfo.value);
+        if (typeof value === 'string') {
+          const str = value.trim();
+          if (str.length > 3 && str.length < 100 && !/^\d+[A-Z]-\d+$/.test(str) &&
+              !this.isSubItemName(str) && !this.isSectionHeader(str) &&
+              !this.isUnitHeader(str) && !this.isTableHeader(str)) {
+            return str;
+          }
+        }
+      }
+    }
+    return '';
+  }
+
+  // 判断是否为子目名称的辅助方法
+  private isSubItemName(name: string): boolean {
+    const subItemNames = ['工作内容', '附注', '子目', '编号', '名称', '单位', '基价', '人工', '材料', '机械', '管理费', '利润', '其他', '规格', '单价', '含量', '材料号', '是否有明细', '子目编号', '子目名称'];
+    return subItemNames.some(subName => name.includes(subName));
+  }
+
+  // 判断是否为章节标题的辅助方法
+  private isSectionHeader(name: string): boolean {
+    const sectionHeaders = ['第一章', '第二章', '第三章', '第四章', '第五章', '第六章', '第七章', '第八章', '第九章', '第十章', '第一节', '第二节', '第三节', '第四节', '第五节', '第六节', '第七节', '第八节', '第九节', '第十节'];
+    return sectionHeaders.some(header => name.includes(header));
+  }
+
+  // 判断是否为单位表头的辅助方法
+  private isUnitHeader(name: string): boolean {
+    const unitHeaders = ['工日', '台班', 'kg', 'm3', 'm', '个', '套', '台', '根', '条', '块', '组', '处', 'km', '头', 't', 'L', 'm2', '千克', '立方米', '平方米', '米', '件', '吨', '升', '公里', '千克', '公斤'];
+    return unitHeaders.some(header => name.includes(header));
+  }
+
+  // 判断是否为表格表头的辅助方法
+  private isTableHeader(name: string): boolean {
+    const tableHeaders = ['人 材 机 名 称', '人材机名称', '工作内容', '附注', '子目', '编号', '名称', '单位', '基价', '人工', '材料', '机械', '管理费', '利润', '其他', '规格', '单价', '含量', '材料号', '是否有明细', '消耗量', '工程量计算规则', '减振装置安装', '燃气采暖炉', '燃气开水炉', '手动放风阀', '单气嘴'];
+    return tableHeaders.some(header => name.includes(header));
+  }
+
+  // 判断是否为有效材料的辅助方法
+  private isValidMaterial(materialName: string): boolean {
+    const validMaterials = ['钢材', '水泥', '木材', '砖', '砂', '石', '钢筋', '混凝土', '沥青', '管材', '电缆', '电线', '工日', '台班', 'kg', 'm3', 'm', '个', '套', '台', '根', '条', '块', '组', '处', 'km', '头', 't', 'L', 'm2', '千克', '立方米', '平方米', '米', '件', '吨', '升', '公里', '千克', '公斤'];
+    return validMaterials.some(material => materialName.includes(material));
   }
 }

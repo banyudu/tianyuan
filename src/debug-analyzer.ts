@@ -1,307 +1,170 @@
-import { ExcelAnalyzer } from './excel-analyzer';
+import * as ExcelJS from 'exceljs';
+import * as path from 'path';
 
-export class DebugAnalyzer {
-  private analyzer: ExcelAnalyzer;
-
-  constructor() {
-    this.analyzer = new ExcelAnalyzer();
-  }
-
-  async analyzeFile(filePath: string): Promise<void> {
-    await this.analyzer.loadFile(filePath);
-
-    console.log('\n=== 调试分析开始 ===');
-
-    // 分析前100行的内容结构
-    this.analyzeRowStructure();
-
-    // 寻找关键标识行
-    this.findKeyRows();
-
-    // 分析边框模式
-    this.analyzeBorderPatterns();
-
-    // 搜索附注信息模式
-    this.searchNoteInfoPatterns();
-
-    // 搜索子目信息模式
-    this.searchSubItemPatterns();
-
-    // 分析附注行周围的内容
-    this.analyzeRowsAroundNotes();
-
-    // 分析材料表结构
-    this.analyzeMaterialTableStructure();
-  }
-
-  private analyzeRowStructure(): void {
-    console.log('\n--- 行结构分析 ---');
-
-    for (let row = 1; row <= Math.min(100, 839); row++) {
-      const rowData: any[] = [];
-      let hasContent = false;
-
-      for (let col = 1; col <= Math.min(15, 32); col++) {
-        const cellInfo = this.analyzer.getCellInfo(row, col);
-        let value = cellInfo.value;
-
-        // 处理复杂对象
-        if (value && typeof value === 'object') {
-          if ('richText' in value && Array.isArray(value.richText)) {
-            value = value.richText.map((rt: any) => rt.text || '').join('');
-          } else if ('text' in value) {
-            value = value.text;
+async function analyzeInputFile() {
+  console.log('=== 分析输入文件结构 ===');
+  
+  const workbook = new ExcelJS.Workbook();
+  const inputFile = path.join(__dirname, '../sample/input.xlsx');
+  
+  await workbook.xlsx.readFile(inputFile);
+  const worksheet = workbook.worksheets[0];
+  
+  console.log(`工作表名称: ${worksheet.name}`);
+  console.log(`行数: ${worksheet.rowCount}, 列数: ${worksheet.columnCount}`);
+  
+  // 分析前50行的结构
+  console.log('\n=== 前50行数据结构分析 ===');
+  for (let row = 1; row <= Math.min(50, worksheet.rowCount); row++) {
+    const rowData: string[] = [];
+    let hasContent = false;
+    
+    for (let col = 1; col <= Math.min(15, worksheet.columnCount); col++) {
+      const cell = worksheet.getCell(row, col);
+      let value = '';
+      
+      if (cell.value !== null && cell.value !== undefined) {
+        if (typeof cell.value === 'object') {
+          if ('richText' in cell.value && Array.isArray(cell.value.richText)) {
+            value = cell.value.richText.map((rt: any) => rt.text || '').join('');
+          } else if ('text' in cell.value) {
+            value = cell.value.text;
+          } else if ('result' in cell.value) {
+            value = cell.value.result;
+          } else if ('formula' in cell.value) {
+            value = cell.value.result || cell.value.formula;
           } else {
-            value = String(value);
+            value = String(cell.value);
           }
+        } else {
+          value = String(cell.value);
         }
-
-        if (value && String(value).trim()) {
+        
+        if (value.trim()) {
           hasContent = true;
         }
-
-        rowData.push(String(value || '').substring(0, 15));
       }
-
-      if (hasContent) {
-        console.log(`行${row}: [${rowData.join(' | ')}]`);
-
-        // 检查是否是潜在的标题行
-        const rowText = rowData.join(' ').toLowerCase();
-        if (rowText.includes('编号') || rowText.includes('名称') || rowText.includes('工作内容') ||
-            rowText.includes('附注') || rowText.includes('子目') || rowText.includes('含量')) {
-          console.log(`  -> 可能是标题行: ${rowText}`);
-        }
-
-        // 检查是否包含定额编号
-        const hasDefineCode = rowData.some(cell => /\d+[A-Z]-\d+/.test(cell));
-        if (hasDefineCode) {
-          console.log(`  -> 包含定额编号`);
-        }
-      }
-
-      // 只显示前50行和后段的关键行
-      if (row === 50) {
-        console.log('... 跳过中间行，显示后段重要行 ...');
-        row = Math.max(50, 839 - 50);
+      
+      rowData.push(value);
+    }
+    
+    if (hasContent) {
+      const rowText = rowData.join(' | ').trim();
+      if (rowText) {
+        console.log(`行${row}: ${rowText.substring(0, 150)}${rowText.length > 150 ? '...' : ''}`);
       }
     }
   }
-
-  private findKeyRows(): void {
-    console.log('\n--- 关键行查找 ---');
-
-    const keywords = ['工作内容', '附注信息', '子目信息', '含量表', '编号', '名称', '单位', '单价'];
-
-    for (let row = 1; row <= 839; row++) {
-      const rowData: string[] = [];
-
-      for (let col = 1; col <= 32; col++) {
-        const cellInfo = this.analyzer.getCellInfo(row, col);
-        let value = cellInfo.value;
-
-        if (value && typeof value === 'object') {
-          if ('richText' in value && Array.isArray(value.richText)) {
-            value = value.richText.map((rt: any) => rt.text || '').join('');
-          } else if ('text' in value) {
-            value = value.text;
-          } else {
-            value = String(value);
-          }
+  
+  // 查找定额编号模式
+  console.log('\n=== 定额编号模式分析 ===');
+  const quotaCodes: {row: number, col: number, code: string}[] = [];
+  
+  for (let row = 1; row <= worksheet.rowCount && quotaCodes.length < 20; row++) {
+    for (let col = 1; col <= worksheet.columnCount; col++) {
+      const cell = worksheet.getCell(row, col);
+      if (cell.value) {
+        const str = String(cell.value).trim();
+        if (/^\d+[A-Z]-\d+$/.test(str)) {
+          quotaCodes.push({row, col, code: str});
         }
-
-        rowData.push(String(value || ''));
       }
-
-      const rowText = rowData.join(' ');
-
-      for (const keyword of keywords) {
-        if (rowText.includes(keyword)) {
-          console.log(`行${row} 包含关键词"${keyword}": ${rowText.substring(0, 100)}...`);
+    }
+  }
+  
+  console.log(`找到 ${quotaCodes.length} 个定额编号示例:`);
+  quotaCodes.slice(0, 10).forEach(item => {
+    console.log(`  行${item.row}, 列${item.col}: ${item.code}`);
+  });
+  
+  // 查找章节标题
+  console.log('\n=== 章节标题模式分析 ===');
+  const chapters: {row: number, text: string}[] = [];
+  
+  for (let row = 1; row <= worksheet.rowCount && chapters.length < 10; row++) {
+    const cell = worksheet.getCell(row, 1);
+    if (cell.value) {
+      const str = String(cell.value).trim();
+      if (/第[一二三四五六七八九十]+章/.test(str)) {
+        chapters.push({row, text: str});
+      }
+    }
+  }
+  
+  console.log(`找到 ${chapters.length} 个章节标题:`);
+  chapters.forEach(item => {
+    console.log(`  行${item.row}: ${item.text}`);
+  });
+  
+  // 查找工作内容模式
+  console.log('\n=== 工作内容模式分析 ===');
+  const workContents: {row: number, text: string}[] = [];
+  
+  for (let row = 1; row <= worksheet.rowCount && workContents.length < 10; row++) {
+    for (let col = 1; col <= worksheet.columnCount; col++) {
+      const cell = worksheet.getCell(row, col);
+      if (cell.value) {
+        const str = String(cell.value).trim();
+        if (str.includes('工作内容') && str.includes('：')) {
+          const preview = str.substring(0, 100);
+          workContents.push({row, text: preview});
           break;
         }
       }
     }
   }
-
-  private analyzeBorderPatterns(): void {
-    console.log('\n--- 边框模式分析 ---');
-
-    let borderRegions = 0;
-    let lastBorderRow = 0;
-
-    for (let row = 1; row <= 839; row++) {
-      let hasBorder = false;
-
-      for (let col = 1; col <= 32; col++) {
-        const cellInfo = this.analyzer.getCellInfo(row, col);
-        if (cellInfo.borders.top || cellInfo.borders.bottom ||
-            cellInfo.borders.left || cellInfo.borders.right) {
-          hasBorder = true;
+  
+  console.log(`找到 ${workContents.length} 个工作内容:`);
+  workContents.forEach(item => {
+    console.log(`  行${item.row}: ${item.text}...`);
+  });
+  
+  // 查找附注信息模式
+  console.log('\n=== 附注信息模式分析 ===');
+  const notes: {row: number, text: string}[] = [];
+  
+  for (let row = 1; row <= worksheet.rowCount && notes.length < 10; row++) {
+    for (let col = 1; col <= worksheet.columnCount; col++) {
+      const cell = worksheet.getCell(row, col);
+      if (cell.value) {
+        const str = String(cell.value).trim();
+        if (str.includes('注 : 未包括') || str.includes('注: 未包括')) {
+          const preview = str.substring(0, 100);
+          notes.push({row, text: preview});
           break;
         }
       }
-
-      if (hasBorder) {
-        if (row - lastBorderRow > 50) {
-          borderRegions++;
-          console.log(`边框区域 ${borderRegions} 开始于行 ${row}`);
-        }
-        lastBorderRow = row;
-      }
-    }
-
-    console.log(`总共发现 ${borderRegions} 个可能的边框区域`);
-  }
-
-    // 搜索附注信息模式
-  searchNoteInfoPatterns(): void {
-    console.log('\n--- 搜索附注信息模式 ---');
-
-    for (let row = 1; row <= 839; row++) {
-      const rowData: string[] = [];
-
-      for (let col = 1; col <= 32; col++) {
-        const cellInfo = this.analyzer.getCellInfo(row, col);
-        const value = this.analyzer.processExcelValue(cellInfo.value);
-        if (value && typeof value === 'string') {
-          rowData.push(value);
-        }
-      }
-
-      const rowText = rowData.join(' ');
-
-      // 搜索包含"未包括"的行
-      if (rowText.includes('未包括')) {
-        console.log(`行${row}: ${rowText.substring(0, 100)}...`);
-      }
-
-      // 搜索包含"附注"的行
-      if (rowText.includes('附注')) {
-        console.log(`行${row}: ${rowText.substring(0, 100)}...`);
-      }
-
-      // 搜索包含"备注"的行
-      if (rowText.includes('备注')) {
-        console.log(`行${row}: ${rowText.substring(0, 100)}...`);
-      }
     }
   }
-
-  // 搜索子目信息模式
-  searchSubItemPatterns(): void {
-    console.log('\n--- 搜索子目信息模式 ---');
-
-    for (let row = 1; row <= 839; row++) {
-      const rowData: string[] = [];
-
-      for (let col = 1; col <= Math.min(5, 32); col++) {
-        const cellInfo = this.analyzer.getCellInfo(row, col);
-        const value = this.analyzer.processExcelValue(cellInfo.value);
-        if (value && typeof value === 'string') {
-          rowData.push(value);
-        }
-      }
-
-      const firstCol = rowData[0] || '';
-      const secondCol = rowData[1] || '';
-
-      // 搜索章节标题
-      if (/^第[一二三四五六七八九十]+章/.test(firstCol)) {
-        console.log(`行${row}: 章节标题 - ${firstCol} ${secondCol}`);
-      }
-
-      // 搜索节标题
-      if (/^第[一二三四五六七八九十]+节/.test(firstCol)) {
-        console.log(`行${row}: 节标题 - ${firstCol} ${secondCol}`);
-      }
-
-      // 搜索子节标题
-      if (/^[一二三四五六七八九十]+、/.test(firstCol)) {
-        console.log(`行${row}: 子节标题 - ${firstCol} ${secondCol}`);
-      }
-
-      // 搜索数字子节标题
-      if (/^\d+、/.test(firstCol)) {
-        console.log(`行${row}: 数字子节标题 - ${firstCol} ${secondCol}`);
-      }
-
-      // 搜索括号子节标题
-      if (/^\([一二三四五六七八九十]+\)/.test(firstCol)) {
-        console.log(`行${row}: 括号子节标题 - ${firstCol} ${secondCol}`);
-      }
-
-      // 搜索定额编号
-      if (/^\d+[A-Z]-\d+$/.test(firstCol)) {
-        console.log(`行${row}: 定额编号 - ${firstCol} ${secondCol}`);
-      }
-    }
-  }
-
-  // 分析特定行周围的内容
-  analyzeRowsAroundNotes(): void {
-    console.log('\n--- 分析附注行周围的内容 ---');
-
-    const noteRows = [301, 310, 323, 342, 352, 361, 372, 382, 392, 412, 479];
-
-    for (const noteRow of noteRows) {
-      console.log(`\n=== 分析行 ${noteRow} 周围的内容 ===`);
-
-      // 显示前5行和后5行
-      for (let row = Math.max(1, noteRow - 5); row <= Math.min(this.analyzer.worksheet.rowCount, noteRow + 5); row++) {
-        const rowData: string[] = [];
-
-        for (let col = 1; col <= Math.min(10, this.analyzer.worksheet.columnCount); col++) {
-          const cellInfo = this.analyzer.getCellInfo(row, col);
-          const value = this.analyzer.processExcelValue(cellInfo.value);
-          rowData.push(String(value || ''));
-        }
-
-        const rowText = rowData.join(' | ');
-        const marker = row === noteRow ? '>>> ' : '    ';
-        console.log(`${marker}行${row}: ${rowText.substring(0, 150)}...`);
-      }
-    }
-  }
-
-  // 分析材料表结构
-  analyzeMaterialTableStructure(): void {
-    console.log('\n--- 分析材料表结构 ---');
-
-    const materialTableRows = [108, 288, 297, 307, 318, 339, 358, 441, 476];
-
-    for (const tableRow of materialTableRows) {
-      console.log(`\n=== 分析材料表行 ${tableRow} ===`);
-
-      // 显示表头行
-      console.log('表头行:');
-      for (let col = 1; col <= Math.min(15, this.analyzer.worksheet.columnCount); col++) {
-        const cellInfo = this.analyzer.getCellInfo(tableRow, col);
-        const value = this.analyzer.processExcelValue(cellInfo.value);
-        console.log(`  列${col}: "${String(value || '')}"`);
-      }
-
-      // 显示数据行
-      console.log('数据行:');
-      for (let dataRow = tableRow + 1; dataRow <= Math.min(tableRow + 10, this.analyzer.worksheet.rowCount); dataRow++) {
-        const rowData: string[] = [];
-        for (let col = 1; col <= Math.min(15, this.analyzer.worksheet.columnCount); col++) {
-          const cellInfo = this.analyzer.getCellInfo(dataRow, col);
-          const value = this.analyzer.processExcelValue(cellInfo.value);
-          rowData.push(String(value || ''));
-        }
-
-        const rowText = rowData.join(' | ');
-        if (rowText.trim()) {
-          console.log(`  行${dataRow}: ${rowText.substring(0, 200)}...`);
+  
+  console.log(`找到 ${notes.length} 个附注信息:`);
+  notes.forEach(item => {
+    console.log(`  行${item.row}: ${item.text}...`);
+  });
+  
+  // 查找材料表头
+  console.log('\n=== 材料表头模式分析 ===');
+  const materialHeaders: {row: number, text: string}[] = [];
+  
+  for (let row = 1; row <= worksheet.rowCount && materialHeaders.length < 10; row++) {
+    for (let col = 1; col <= worksheet.columnCount; col++) {
+      const cell = worksheet.getCell(row, col);
+      if (cell.value) {
+        const str = String(cell.value).trim();
+        if (str.includes('人材机名称') || (str.includes('人') && str.includes('材') && str.includes('机') && str.includes('名称'))) {
+          const preview = str.substring(0, 150);
+          materialHeaders.push({row, text: preview});
+          break;
         }
       }
     }
   }
+  
+  console.log(`找到 ${materialHeaders.length} 个材料表头:`);
+  materialHeaders.forEach(item => {
+    console.log(`  行${item.row}: ${item.text}...`);
+  });
 }
 
-// 如果直接运行此文件
-if (require.main === module) {
-  const analyzer = new DebugAnalyzer();
-  analyzer.analyzeFile('./sample/input.xlsx').catch(console.error);
-}
+// 运行分析
+analyzeInputFile().catch(console.error);

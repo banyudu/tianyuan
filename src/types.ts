@@ -1,5 +1,39 @@
 export type 子目编号 = string; // 子目编号，如 1B-1, 7B-22
 
+export interface CellData {
+  row: number;
+  col: number;
+  address: string;
+  value: any;
+  type: string;
+  merged: boolean;
+  mergedRange?: {
+    startRow: number;
+    endRow: number;
+    startCol: number;
+    endCol: number;
+  };
+  borders: {
+    top: boolean;
+    bottom: boolean;
+    left: boolean;
+    right: boolean;
+  };
+}
+
+export interface ParsedExcelData {
+  metadata: {
+    filename: string;
+    sheetName: string;
+    totalRows: number;
+    totalCols: number;
+    actualRowCount: number;
+    actualColCount: number;
+    parsedAt: string;
+  };
+  cells: CellData[];
+}
+
 export interface 附注信息 {
   编号: 子目编号[]; // will be converted to a string with comma separated values
   附注信息: string;

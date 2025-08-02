@@ -1,5 +1,10 @@
 export type 子目编号 = string; // 子目编号，如 1B-1, 7B-22
 
+export interface BorderStyle {
+  style?: string; // 'thin', 'medium', 'thick', 'double', etc.
+  color?: string; // hex color like '#000000'
+}
+
 export interface CellData {
   row: number;
   col: number;
@@ -18,6 +23,31 @@ export interface CellData {
     bottom: boolean;
     left: boolean;
     right: boolean;
+  };
+  borderStyles?: {
+    top?: BorderStyle;
+    bottom?: BorderStyle;
+    left?: BorderStyle;
+    right?: BorderStyle;
+  };
+  fill?: {
+    type?: string; // 'pattern', 'gradient'
+    pattern?: string; // 'solid', 'darkGray', etc.
+    fgColor?: string; // foreground color
+    bgColor?: string; // background color
+  };
+  font?: {
+    name?: string; // font family
+    size?: number; // font size
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    color?: string; // font color
+  };
+  alignment?: {
+    horizontal?: string; // 'left', 'center', 'right'
+    vertical?: string; // 'top', 'middle', 'bottom'
+    wrapText?: boolean;
   };
 }
 

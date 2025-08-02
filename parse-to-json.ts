@@ -1,7 +1,7 @@
 import * as ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CellData, ParsedExcelData } from './src/types';
+import { CellData, ParsedExcelData, BorderStyle } from './src/types';
 
 class ExcelToJsonParser {
   private workbook: ExcelJS.Workbook;
@@ -69,6 +69,105 @@ class ExcelToJsonParser {
     }
 
     return borders;
+  }
+
+  private getBorderStyles(cell: ExcelJS.Cell): CellData['borderStyles'] {
+    if (!cell.border) return undefined;
+
+    const borderStyles: CellData['borderStyles'] = {};
+
+    if (cell.border.top && cell.border.top.style) {
+      borderStyles.top = {
+        style: cell.border.top.style,
+        color: this.getColorValue(cell.border.top.color)
+      };
+    }
+
+    if (cell.border.bottom && cell.border.bottom.style) {
+      borderStyles.bottom = {
+        style: cell.border.bottom.style,
+        color: this.getColorValue(cell.border.bottom.color)
+      };
+    }
+
+    if (cell.border.left && cell.border.left.style) {
+      borderStyles.left = {
+        style: cell.border.left.style,
+        color: this.getColorValue(cell.border.left.color)
+      };
+    }
+
+    if (cell.border.right && cell.border.right.style) {
+      borderStyles.right = {
+        style: cell.border.right.style,
+        color: this.getColorValue(cell.border.right.color)
+      };
+    }
+
+    return Object.keys(borderStyles).length > 0 ? borderStyles : undefined;
+  }
+
+  private getColorValue(color: any): string | undefined {
+    if (!color) return undefined;
+    if (typeof color === 'string') return color;
+    if (color.argb) return `#${color.argb.slice(2)}`; // Remove alpha channel
+    if (color.rgb) return `#${color.rgb}`;
+    if (color.theme !== undefined && color.tint !== undefined) {
+      // For theme colors, return a description since we can't easily convert to hex
+      return `theme:${color.theme},tint:${color.tint}`;
+    }
+    return undefined;
+  }
+
+  private getFillInfo(cell: ExcelJS.Cell): CellData['fill'] {
+    if (!cell.fill) return undefined;
+
+    const fill: CellData['fill'] = {};
+
+    if (cell.fill.type) {
+      fill.type = cell.fill.type;
+    }
+
+    if ('pattern' in cell.fill && cell.fill.pattern) {
+      fill.pattern = cell.fill.pattern;
+    }
+
+    if ('fgColor' in cell.fill && cell.fill.fgColor) {
+      fill.fgColor = this.getColorValue(cell.fill.fgColor);
+    }
+
+    if ('bgColor' in cell.fill && cell.fill.bgColor) {
+      fill.bgColor = this.getColorValue(cell.fill.bgColor);
+    }
+
+    return Object.keys(fill).length > 0 ? fill : undefined;
+  }
+
+  private getFontInfo(cell: ExcelJS.Cell): CellData['font'] {
+    if (!cell.font) return undefined;
+
+    const font: CellData['font'] = {};
+
+    if (cell.font.name) font.name = cell.font.name;
+    if (cell.font.size) font.size = cell.font.size;
+    if (cell.font.bold !== undefined) font.bold = cell.font.bold;
+    if (cell.font.italic !== undefined) font.italic = cell.font.italic;
+    if (cell.font.underline !== undefined) font.underline = !!cell.font.underline;
+    if (cell.font.color) font.color = this.getColorValue(cell.font.color);
+
+    return Object.keys(font).length > 0 ? font : undefined;
+  }
+
+  private getAlignmentInfo(cell: ExcelJS.Cell): CellData['alignment'] {
+    if (!cell.alignment) return undefined;
+
+    const alignment: CellData['alignment'] = {};
+
+    if (cell.alignment.horizontal) alignment.horizontal = cell.alignment.horizontal;
+    if (cell.alignment.vertical) alignment.vertical = cell.alignment.vertical;
+    if (cell.alignment.wrapText !== undefined) alignment.wrapText = cell.alignment.wrapText;
+
+    return Object.keys(alignment).length > 0 ? alignment : undefined;
   }
 
   private getMergedRangeInfo(worksheet: ExcelJS.Worksheet, row: number, col: number): CellData['mergedRange'] | undefined {
@@ -178,6 +277,19 @@ class ExcelToJsonParser {
             mergedRange,
             borders: hasBorders
           };
+
+          // Add style information
+          const borderStyles = this.getBorderStyles(cell);
+          if (borderStyles) cellData.borderStyles = borderStyles;
+
+          const fill = this.getFillInfo(cell);
+          if (fill) cellData.fill = fill;
+
+          const font = this.getFontInfo(cell);
+          if (font) cellData.font = font;
+
+          const alignment = this.getAlignmentInfo(cell);
+          if (alignment) cellData.alignment = alignment;
 
           cells.push(cellData);
         }

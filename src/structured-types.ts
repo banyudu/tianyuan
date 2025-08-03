@@ -10,8 +10,8 @@ export interface TableArea {
   range: TableRange;
   quotaCodes: string[];
   unit?: string;
-  workContent?: string;
-  notes: string[];
+  workContent?: string;  // Optional - not every table has work content
+  notes: string[];       // Optional - not every table has notes
   isContinuation?: boolean;
   continuationOf?: string;
 }

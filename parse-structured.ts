@@ -69,6 +69,39 @@ class StructuredExcelParser {
     return /^\d+[A-Z]-\d+$/.test(value);
   }
 
+  private areInSameTable(quota1: {row: number; col: number}, quota2: {row: number; col: number}): boolean {
+    // Check if two quota codes are in the same table by looking at the area between them
+    const minRow = Math.min(quota1.row, quota2.row);
+    const maxRow = Math.max(quota1.row, quota2.row);
+    const minCol = Math.min(quota1.col, quota2.col);
+    const maxCol = Math.max(quota1.col, quota2.col);
+    
+    // Much more restrictive - if they're too far apart, they're likely in different tables
+    if (maxRow - minRow > 8 || maxCol - minCol > 8) {
+      return false;
+    }
+    
+    // Check if they're in the same row (horizontal table layout)
+    if (quota1.row === quota2.row) {
+      return true;
+    }
+    
+    // For vertical proximity, check if there are connecting cells with borders
+    let hasConnectingBorders = false;
+    for (let r = minRow; r <= maxRow; r++) {
+      for (let c = minCol; c <= maxCol; c++) {
+        const cell = this.getCell(r, c);
+        if (cell && (cell.borderStyles || cell.borders)) {
+          hasConnectingBorders = true;
+          break;
+        }
+      }
+      if (hasConnectingBorders) break;
+    }
+    
+    return hasConnectingBorders;
+  }
+
   private isWorkContent(value: string): boolean {
     return value.includes('工作') && value.includes('内容') && value.includes('：');
   }
@@ -128,126 +161,130 @@ class StructuredExcelParser {
 
   private detectTableAreas(): TableArea[] {
     const tableAreas: TableArea[] = [];
-    const processedCells = new Set<string>();
-
-    // Find cells with medium or thick borders to detect table regions
+    
+    // Strategy 1: Find all quota codes first, then build tables around them
+    const quotaCodeCells: Array<{row: number; col: number; code: string}> = [];
+    
     for (const cell of this.data.cells) {
-      const key = `${cell.row}-${cell.col}`;
-      if (processedCells.has(key)) continue;
-
-      // Check if cell has border styles (if borderStyles exists in data)
-      let hasMediumBorder = false;
-      if (cell.borderStyles) {
-        const borderInfo = this.getBorderInfo(cell);
-        hasMediumBorder = borderInfo.topStyle === 'medium' || 
-                         borderInfo.bottomStyle === 'medium' || 
-                         borderInfo.leftStyle === 'medium' || 
-                         borderInfo.rightStyle === 'medium';
-      } else if (cell.borders) {
-        // Fallback to old border format
-        hasMediumBorder = cell.borders.top || cell.borders.bottom || 
-                         cell.borders.left || cell.borders.right;
+      if (cell.value && typeof cell.value === 'string' && this.isQuotaCode(cell.value)) {
+        quotaCodeCells.push({
+          row: cell.row,
+          col: cell.col,
+          code: cell.value
+        });
       }
-
-      if (!hasMediumBorder) continue;
-
-      // Find table boundaries by expanding from this cell
-      const startRow = cell.row;
-      let endRow = startRow;
-      let startCol = cell.col;
-      let endCol = startCol;
-
-      const maxSearchRows = 25;
-      const maxSearchCols = 32;
-
-      // Expand to find the full table area
-      for (let r = startRow; r <= startRow + maxSearchRows && r <= this.data.metadata.totalRows; r++) {
-        for (let c = startCol; c <= startCol + maxSearchCols && c <= this.data.metadata.totalCols; c++) {
-          const checkCell = this.getCell(r, c);
-          if (checkCell) {
-            const checkBorderInfo = this.getBorderInfo(checkCell);
-            const hasAnyMediumBorder = checkBorderInfo.topStyle === 'medium' || 
-                                     checkBorderInfo.bottomStyle === 'medium' || 
-                                     checkBorderInfo.leftStyle === 'medium' || 
-                                     checkBorderInfo.rightStyle === 'medium';
-            
-            if (hasAnyMediumBorder) {
-              endRow = Math.max(endRow, r);
-              endCol = Math.max(endCol, c);
+    }
+    
+    console.log(`Found ${quotaCodeCells.length} quota code cells`);
+    
+    // Group quota codes by proximity (same table)
+    const processedQuotas = new Set<string>();
+    
+    for (const quotaCell of quotaCodeCells) {
+      const key = `${quotaCell.row}-${quotaCell.col}`;
+      if (processedQuotas.has(key)) continue;
+      
+      // Find the table boundaries around this quota code
+      const tableQuotas: Array<{row: number; col: number; code: string}> = [];
+      const visitedCells = new Set<string>();
+      
+      // Use BFS to find all connected quota codes in the same table structure
+      const queue = [quotaCell];
+      visitedCells.add(key);
+      
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        tableQuotas.push(current);
+        
+        // Look for nearby quota codes within reasonable distance (much smaller radius)
+        const searchRadius = 8; // cells - reduced for more granular tables
+        for (const otherQuota of quotaCodeCells) {
+          const otherKey = `${otherQuota.row}-${otherQuota.col}`;
+          if (visitedCells.has(otherKey)) continue;
+          
+          // Check if this quota is within the same table area
+          const rowDistance = Math.abs(otherQuota.row - current.row);
+          const colDistance = Math.abs(otherQuota.col - current.col);
+          
+          // More restrictive conditions for smaller tables
+          if (rowDistance <= searchRadius && colDistance <= searchRadius) {
+            // Additional check: ensure they're in the same bordered area and close enough
+            if (this.areInSameTable(current, otherQuota) && rowDistance <= 5) {
+              visitedCells.add(otherKey);
+              queue.push(otherQuota);
             }
           }
         }
       }
-
-      // Extract quota codes, work content, and notes for this table
-      const quotaCodes: string[] = [];
-      let unit = '';
-      let workContent = '';
-      const notes: string[] = [];
-
-      // Look for quota codes in the table header area (first few rows)
-      for (let r = startRow; r <= Math.min(startRow + 3, endRow); r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          const value = this.getCellValue(r, c);
-          if (this.isQuotaCode(value)) {
-            quotaCodes.push(value);
+      
+      // Mark all found quotas as processed
+      for (const tq of tableQuotas) {
+        processedQuotas.add(`${tq.row}-${tq.col}`);
+      }
+      
+      if (tableQuotas.length > 0) {
+        // Calculate table boundaries
+        const rows = tableQuotas.map(q => q.row);
+        const cols = tableQuotas.map(q => q.col);
+        
+        const minRow = Math.min(...rows);
+        const maxRow = Math.max(...rows);
+        const minCol = Math.min(...cols);
+        const maxCol = Math.max(...cols);
+        
+        // Expand boundaries to include table structure
+        const startRow = Math.max(1, minRow - 2);
+        const endRow = Math.min(this.data.metadata.totalRows, maxRow + 10);
+        const startCol = Math.max(1, minCol - 2);
+        const endCol = Math.min(this.data.metadata.totalCols, maxCol + 5);
+        
+        // Extract table information
+        const quotaCodes = tableQuotas.map(q => q.code).sort();
+        let unit = '';
+        let workContent = '';
+        const notes: string[] = [];
+        
+        // Look for work content in rows above the table
+        for (let r = Math.max(1, startRow - 3); r < startRow + 3; r++) {
+          for (let c = startCol; c <= endCol; c++) {
+            const value = this.getCellValue(r, c);
+            if (this.isWorkContent(value)) {
+              workContent = value;
+              break;
+            }
+            if (value && value.includes('单位') && value.includes('：')) {
+              unit = value;
+            }
+          }
+          if (workContent) break;
+        }
+        
+        // Look for notes in rows below the table
+        for (let r = maxRow; r <= Math.min(endRow + 5, this.data.metadata.totalRows); r++) {
+          for (let c = startCol; c <= endCol; c++) {
+            const value = this.getCellValue(r, c);
+            if (this.isNote(value)) {
+              notes.push(value);
+            }
           }
         }
-      }
-
-      // Look for work content in rows above the table
-      for (let r = Math.max(1, startRow - 3); r < startRow; r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          const value = this.getCellValue(r, c);
-          if (this.isWorkContent(value)) {
-            workContent = value;
-            break;
-          }
-          if (value && value.includes('单位') && value.includes('：')) {
-            unit = value;
-          }
-        }
-      }
-
-      // Look for notes in rows below the table
-      for (let r = endRow + 1; r <= Math.min(endRow + 5, this.data.metadata.totalRows); r++) {
-        for (let c = startCol; c <= endCol; c++) {
-          const value = this.getCellValue(r, c);
-          if (this.isNote(value)) {
-            notes.push(value);
-          }
-        }
-      }
-
-      if (quotaCodes.length > 0) {
-        const tableId = `table_${startRow}_${startCol}`;
+        
+        const tableId = `table_${minRow}_${minCol}`;
         const table: TableArea = {
           id: tableId,
           range: { startRow, endRow, startCol, endCol },
           quotaCodes,
           unit,
-          workContent,
+          workContent: workContent || undefined, // Make optional
           notes,
           isContinuation: false
         };
         
         tableAreas.push(table);
         
-        console.log(`  Found table at ${startRow}-${endRow}:${startCol}-${endCol} with ${quotaCodes.length} quotas: ${quotaCodes.join(', ')}`);
+        console.log(`  Found table at ${startRow}-${endRow}:${startCol}-${endCol} with ${quotaCodes.length} quotas: ${quotaCodes.slice(0, 5).join(', ')}${quotaCodes.length > 5 ? '...' : ''}`);
         if (workContent) console.log(`    Work content: ${workContent.substring(0, 50)}...`);
         if (notes.length > 0) console.log(`    Notes: ${notes.length} found`);
-
-        // Mark cells as processed
-        for (let r = startRow; r <= endRow; r++) {
-          for (let c = startCol; c <= endCol; c++) {
-            processedCells.add(`${r}-${c}`);
-          }
-        }
-      } else {
-        // Debug: table found but no quota codes
-        if (endRow - startRow > 3 && endCol - startCol > 3) {
-          console.log(`  Found table structure at ${startRow}-${endRow}:${startCol}-${endCol} but no quota codes detected`);
-        }
       }
     }
 
@@ -392,27 +429,111 @@ class StructuredExcelParser {
         }
       }
 
-      // Assign to the most specific level found
+      // Assign to the most specific level found (prefer leaf nodes - subSections)
       if (bestSubSection) {
         bestSubSection.tableAreas.push(table);
         console.log(`  -> Assigned to subsection: ${bestSubSection.name}`);
         assigned = true;
       } else if (bestSection) {
-        bestSection.tableAreas.push(table);
-        console.log(`  -> Assigned to section: ${bestSection.name}`);
+        // If no subsection, assign to section (but prefer creating a default subsection)
+        if (bestSection.subSections.length === 0) {
+          // Create a default subsection for tables without explicit subsections
+          const defaultSubSection: SubSection = {
+            id: `subsection_${bestSection.id}_default`,
+            name: 'Tables',
+            level: 1,
+            symbol: '',
+            tableAreas: [table],
+            children: []
+          };
+          bestSection.subSections.push(defaultSubSection);
+          console.log(`  -> Created default subsection and assigned table to section: ${bestSection.name}`);
+        } else {
+          // Assign to the last subsection in this section
+          const lastSubSection = bestSection.subSections[bestSection.subSections.length - 1];
+          lastSubSection.tableAreas.push(table);
+          console.log(`  -> Assigned to last subsection: ${lastSubSection.name} in section: ${bestSection.name}`);
+        }
         assigned = true;
       } else if (bestChapter) {
-        bestChapter.tableAreas.push(table);
-        console.log(`  -> Assigned to chapter: ${bestChapter.name}`);
+        // If no section, assign to chapter (but prefer creating a default section/subsection)
+        if (bestChapter.sections.length === 0) {
+          // Create a default section and subsection
+          const defaultSection: Section = {
+            id: `section_${bestChapter.id}_default`,
+            name: 'Default Section',
+            number: '',
+            subSections: [],
+            tableAreas: []
+          };
+          
+          const defaultSubSection: SubSection = {
+            id: `subsection_${defaultSection.id}_default`,
+            name: 'Tables',
+            level: 1,
+            symbol: '',
+            tableAreas: [table],
+            children: []
+          };
+          
+          defaultSection.subSections.push(defaultSubSection);
+          bestChapter.sections.push(defaultSection);
+          console.log(`  -> Created default section/subsection and assigned to chapter: ${bestChapter.name}`);
+        } else {
+          // Assign to the last section's last subsection
+          const lastSection = bestChapter.sections[bestChapter.sections.length - 1];
+          if (lastSection.subSections.length === 0) {
+            const defaultSubSection: SubSection = {
+              id: `subsection_${lastSection.id}_default`,
+              name: 'Tables',
+              level: 1,
+              symbol: '',
+              tableAreas: [table],
+              children: []
+            };
+            lastSection.subSections.push(defaultSubSection);
+            console.log(`  -> Created default subsection in last section: ${lastSection.name}`);
+          } else {
+            const lastSubSection = lastSection.subSections[lastSection.subSections.length - 1];
+            lastSubSection.tableAreas.push(table);
+            console.log(`  -> Assigned to last subsection: ${lastSubSection.name}`);
+          }
+        }
         assigned = true;
       }
 
       if (!assigned) {
         console.log(`  -> WARNING: Could not assign table at row ${tableRow}`);
-        // Assign to first chapter as fallback
+        // Create a fallback structure
         if (chapters.length > 0) {
-          chapters[0].tableAreas.push(table);
-          console.log(`  -> Fallback: Assigned to first chapter: ${chapters[0].name}`);
+          const firstChapter = chapters[0];
+          if (firstChapter.sections.length === 0) {
+            const defaultSection: Section = {
+              id: `section_${firstChapter.id}_fallback`,
+              name: 'Fallback Section',
+              number: '',
+              subSections: [],
+              tableAreas: []
+            };
+            firstChapter.sections.push(defaultSection);
+          }
+          
+          const lastSection = firstChapter.sections[firstChapter.sections.length - 1];
+          if (lastSection.subSections.length === 0) {
+            const defaultSubSection: SubSection = {
+              id: `subsection_${lastSection.id}_fallback`,
+              name: 'Fallback Tables',
+              level: 1,
+              symbol: '',
+              tableAreas: [],
+              children: []
+            };
+            lastSection.subSections.push(defaultSubSection);
+          }
+          
+          const lastSubSection = lastSection.subSections[lastSection.subSections.length - 1];
+          lastSubSection.tableAreas.push(table);
+          console.log(`  -> Fallback: Assigned to subsection in first chapter`);
         }
       }
     }

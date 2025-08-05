@@ -53,16 +53,39 @@ class StructuredExcelParser {
     };
   }
 
-  private isChapterTitle(value: string): boolean {
-    return /^第[一二三四五六七八九十\d]+章/.test(value);
+  private isChapterTitle(value: string, cell?: CellData): boolean {
+    const hasChapterPattern = /^第[一二三四五六七八九十\d]+章/.test(value);
+    if (!cell || !hasChapterPattern) return hasChapterPattern;
+    
+    // Use font information to confirm chapter titles (SimHei font)
+    return cell.font?.name === 'SimHei';
   }
 
-  private isSectionTitle(value: string): boolean {
-    return /^[一二三四五六七八九十]+、/.test(value) || /^\d+\./.test(value);
+  private isSectionTitle(value: string, cell?: CellData): boolean {
+    // Only SimHei font cells can be section titles
+    if (cell?.font?.name !== 'SimHei') {
+      return false;
+    }
+    
+    // True section titles like "第一节 减振装置安装"
+    const hasSectionPattern = /^第[一二三四五六七八九十\d]+节/.test(value);
+    return hasSectionPattern;
   }
 
-  private isSubSectionTitle(value: string): boolean {
-    return /^\(\d+\)/.test(value) || /^[一二三四五六七八九十]+\./.test(value);
+  private isSubSectionTitle(value: string, cell?: CellData): boolean {
+    // Only consider subsection titles that use SimHei font (structural headers)
+    if (cell?.font?.name !== 'SimHei') {
+      return false;
+    }
+    
+    // Subsection titles with spaces like "一 、减振装置安装" use SimHei font  
+    const hasSpacedSubSectionPattern = /^[一二三四五六七八九十]+\s+、/.test(value);
+    if (hasSpacedSubSectionPattern) {
+      return true;
+    }
+    
+    // Numbered subsections like "(1)" - but these are rare and should also have SimHei
+    return /^\(\d+\)/.test(value);
   }
 
   private isQuotaCode(value: string): boolean {
@@ -126,15 +149,16 @@ class StructuredExcelParser {
   }
 
   private parseSectionTitle(value: string): { symbol: string; name: string } | null {
-    // Match patterns like "一、机械设备安装工程" or "1.工地运输"
-    let match = value.match(/^([一二三四五六七八九十]+)、\s*(.+?)(?:\s*·|$)/);
+    // Match patterns like "第一节 减振装置安装"
+    let match = value.match(/^(第[一二三四五六七八九十\d]+节)\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
-        symbol: match[1] + '、',
+        symbol: match[1],
         name: match[2].trim()
       };
     }
     
+    // Match numbered patterns like "1.工地运输"
     match = value.match(/^(\d+)\.\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
@@ -147,8 +171,26 @@ class StructuredExcelParser {
   }
 
   private parseSubSectionTitle(value: string): { symbol: string; name: string } | null {
-    // Match patterns like "(1)单杆" or "1.工地运输"
-    let match = value.match(/^\((\d+)\)\s*(.+?)(?:\s*·|$)/);
+    // Match patterns like "一 、减振装置安装" (with spaces)
+    let match = value.match(/^([一二三四五六七八九十]+)\s+、\s*(.+?)(?:\s*·|$)/);
+    if (match) {
+      return {
+        symbol: match[1] + ' 、',
+        name: match[2].trim()
+      };
+    }
+    
+    // Match patterns like "一、减振装置安装" (without spaces)
+    match = value.match(/^([一二三四五六七八九十]+)、\s*(.+?)(?:\s*·|$)/);
+    if (match) {
+      return {
+        symbol: match[1] + '、',
+        name: match[2].trim()
+      };
+    }
+    
+    // Match patterns like "(1)单杆"
+    match = value.match(/^\((\d+)\)\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
         symbol: `(${match[1]})`,
@@ -157,6 +199,28 @@ class StructuredExcelParser {
     }
     
     return null;
+  }
+
+  private collectDescriptionText(startRow: number, endRow: number): string[] {
+    const descriptions: string[] = [];
+    
+    for (let row = startRow; row <= endRow; row++) {
+      const cellValue = this.getCellValue(row, 1);
+      const cell = this.getCell(row, 1);
+      
+      // Only collect non-empty SimSun font cells (description text)
+      if (cellValue && cell?.font?.name === 'SimSun') {
+        // Skip if it looks like a structural element
+        if (!this.isChapterTitle(cellValue, cell) && 
+            !this.isSectionTitle(cellValue, cell) && 
+            !this.isSubSectionTitle(cellValue, cell) &&
+            !this.isQuotaCode(cellValue)) {
+          descriptions.push(cellValue);
+        }
+      }
+    }
+    
+    return descriptions;
   }
 
   private detectTableAreas(): TableArea[] {
@@ -324,60 +388,99 @@ class StructuredExcelParser {
     let currentSection: Section | null = null;
     let currentSubSection: SubSection | null = null;
 
-    // Scan through all rows to build hierarchy
+    // First pass: identify all structural headers
+    const structuralHeaders: Array<{row: number, type: 'chapter' | 'section' | 'subsection', data: any}> = [];
+    
     for (let row = 1; row <= this.data.metadata.totalRows; row++) {
-      if (this.processedRows.has(row)) continue;
-
       const cellValue = this.getCellValue(row, 1);
       if (!cellValue) continue;
+      
+      const cell = this.getCell(row, 1);
 
-      // Check for chapter
-      if (this.isChapterTitle(cellValue)) {
+      if (this.isChapterTitle(cellValue, cell)) {
         const chapterInfo = this.parseChapterTitle(cellValue);
         if (chapterInfo) {
-          currentChapter = {
-            id: `chapter_${chapterInfo.number}`,
-            name: chapterInfo.name,
-            number: chapterInfo.number,
-            sections: [],
-            tableAreas: []
-          };
-          chapters.push(currentChapter);
-          currentSection = null;
-          currentSubSection = null;
-          this.processedRows.add(row);
+          structuralHeaders.push({row, type: 'chapter', data: chapterInfo});
         }
-      }
-      // Check for section
-      else if (this.isSectionTitle(cellValue)) {
+      } else if (this.isSectionTitle(cellValue, cell)) {
         const sectionInfo = this.parseSectionTitle(cellValue);
-        if (sectionInfo && currentChapter) {
-          currentSection = {
-            id: `section_${currentChapter.id}_${sectionInfo.symbol}`,
-            name: sectionInfo.name,
-            number: sectionInfo.symbol,
-            subSections: [],
-            tableAreas: []
-          };
-          currentChapter.sections.push(currentSection);
-          currentSubSection = null;
-          this.processedRows.add(row);
+        if (sectionInfo) {
+          structuralHeaders.push({row, type: 'section', data: sectionInfo});
+        }
+      } else if (this.isSubSectionTitle(cellValue, cell)) {
+        const subSectionInfo = this.parseSubSectionTitle(cellValue);
+        if (subSectionInfo) {
+          structuralHeaders.push({row, type: 'subsection', data: subSectionInfo});
         }
       }
-      // Check for sub-section
-      else if (this.isSubSectionTitle(cellValue)) {
-        const subSectionInfo = this.parseSubSectionTitle(cellValue);
-        if (subSectionInfo && currentSection) {
-          currentSubSection = {
-            id: `subsection_${currentSection.id}_${subSectionInfo.symbol}`,
-            name: subSectionInfo.name,
-            level: 1,
-            symbol: subSectionInfo.symbol,
-            tableAreas: [],
-            children: []
-          };
-          currentSection.subSections.push(currentSubSection);
-          this.processedRows.add(row);
+    }
+
+    // Second pass: build hierarchy with descriptions
+    for (let i = 0; i < structuralHeaders.length; i++) {
+      const header = structuralHeaders[i];
+      const nextHeader = structuralHeaders[i + 1];
+      
+      // Calculate description range (between current header and next header)
+      const descriptionStart = header.row + 1;
+      const descriptionEnd = nextHeader ? nextHeader.row - 1 : this.data.metadata.totalRows;
+      
+      if (header.type === 'chapter') {
+        // Collect chapter description
+        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 20));
+        
+        currentChapter = {
+          id: `chapter_${header.data.number}`,
+          name: header.data.name,
+          number: header.data.number,
+          description: description.length > 0 ? description : undefined,
+          sections: [],
+          tableAreas: []
+        };
+        chapters.push(currentChapter);
+        currentSection = null;
+        currentSubSection = null;
+        this.processedRows.add(header.row);
+        console.log(`Found chapter: ${header.data.name} (SimHei font confirmed)`);
+        if (description.length > 0) {
+          console.log(`  Chapter description: ${description.length} lines`);
+        }
+      } else if (header.type === 'section' && currentChapter) {
+        // Collect section description
+        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 15));
+        
+        currentSection = {
+          id: `section_${currentChapter.id}_${header.data.symbol}`,
+          name: header.data.name,
+          number: header.data.symbol,
+          description: description.length > 0 ? description : undefined,
+          subSections: [],
+          tableAreas: []
+        };
+        currentChapter.sections.push(currentSection);
+        currentSubSection = null;
+        this.processedRows.add(header.row);
+        console.log(`Found section: ${header.data.name} (Font: SimHei)`);
+        if (description.length > 0) {
+          console.log(`  Section description: ${description.length} lines`);
+        }
+      } else if (header.type === 'subsection' && currentSection) {
+        // Collect subsection description
+        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 10));
+        
+        currentSubSection = {
+          id: `subsection_${currentSection.id}_${header.data.symbol}`,
+          name: header.data.name,
+          level: 1,
+          symbol: header.data.symbol,
+          description: description.length > 0 ? description : undefined,
+          tableAreas: [],
+          children: []
+        };
+        currentSection.subSections.push(currentSubSection);
+        this.processedRows.add(header.row);
+        console.log(`Found subsection: ${header.data.name} (Font: SimHei)`);
+        if (description.length > 0) {
+          console.log(`  Subsection description: ${description.length} lines`);
         }
       }
     }
@@ -391,43 +494,85 @@ class StructuredExcelParser {
 
       console.log(`Assigning table at row ${tableRow} with quotas: ${table.quotaCodes.join(', ')}`);
 
-      // Find the appropriate hierarchy level for this table
+      // Find the most recent chapter/section/subsection above this table by walking backwards
       let bestChapter: Chapter | null = null;
       let bestSection: Section | null = null;
       let bestSubSection: SubSection | null = null;
+      
+      let lastChapterRow = -1;
+      let lastSectionRow = -1;
+      let lastSubSectionRow = -1;
 
-      // Find the closest chapter
-      for (const chapter of chapters) {
-        const chapterStartRow = this.findRowForText(chapter.name);
-        const nextChapterStartRow = this.findNextChapterRow(chapterStartRow);
+      // Walk backwards from the table to find the most recent hierarchy headers
+      for (let row = tableRow - 1; row >= 1; row--) {
+        const cellValue = this.getCellValue(row, 1);
+        const cell = this.getCell(row, 1);
         
-        if (tableRow > chapterStartRow && tableRow < nextChapterStartRow) {
-          bestChapter = chapter;
-          
-          // Find the closest section within this chapter
-          for (const section of chapter.sections) {
-            const sectionStartRow = this.findRowForText(section.name);
-            const nextSectionStartRow = this.findNextSectionRow(sectionStartRow, chapter);
-            
-            if (tableRow > sectionStartRow && tableRow < nextSectionStartRow) {
-              bestSection = section;
-              
-              // Find the closest subsection within this section
+        if (!cellValue) continue;
+
+        // Check for subsection (most specific)
+        if (lastSubSectionRow === -1 && this.isSubSectionTitle(cellValue, cell)) {
+          lastSubSectionRow = row;
+          // Find the corresponding subsection in our hierarchy
+          for (const chapter of chapters) {
+            for (const section of chapter.sections) {
               for (const subSection of section.subSections) {
-                const subSectionStartRow = this.findRowForText(subSection.name);
-                const nextSubSectionStartRow = this.findNextSubSectionRow(subSectionStartRow, section);
-                
-                if (tableRow > subSectionStartRow && tableRow < nextSubSectionStartRow) {
+                if (cellValue.includes(subSection.name) || subSection.name.includes(cellValue.substring(0, 10))) {
                   bestSubSection = subSection;
+                  bestSection = section;
+                  bestChapter = chapter;
                   break;
                 }
               }
-              break;
+              if (bestSubSection) break;
+            }
+            if (bestSubSection) break;
+          }
+        }
+        
+        // Check for section (medium specificity)
+        if (lastSectionRow === -1 && this.isSectionTitle(cellValue, cell)) {
+          lastSectionRow = row;
+          // Only update if we haven't found a subsection
+          if (!bestSubSection) {
+            for (const chapter of chapters) {
+              for (const section of chapter.sections) {
+                if (cellValue.includes(section.name) || section.name.includes(cellValue.substring(0, 10))) {
+                  bestSection = section;
+                  bestChapter = chapter;
+                  break;
+                }
+              }
+              if (bestSection) break;
             }
           }
+        }
+        
+        // Check for chapter (least specific)
+        if (lastChapterRow === -1 && this.isChapterTitle(cellValue, cell)) {
+          lastChapterRow = row;
+          // Only update if we haven't found a section or subsection
+          if (!bestSection && !bestSubSection) {
+            for (const chapter of chapters) {
+              if (cellValue.includes(chapter.name) || chapter.name.includes(cellValue.substring(0, 10))) {
+                bestChapter = chapter;
+                break;
+              }
+            }
+          }
+        }
+
+        // If we've found all levels or gone too far back, stop searching
+        if ((bestSubSection || bestSection || bestChapter) && row < tableRow - 50) {
           break;
         }
       }
+
+      // Log what we found
+      console.log(`  Found headers above table at row ${tableRow}:`);
+      console.log(`    Chapter: ${bestChapter?.name || 'None'} (row ${lastChapterRow})`);
+      console.log(`    Section: ${bestSection?.name || 'None'} (row ${lastSectionRow})`);
+      console.log(`    SubSection: ${bestSubSection?.name || 'None'} (row ${lastSubSectionRow})`);
 
       // Assign to the most specific level found (prefer leaf nodes - subSections)
       if (bestSubSection) {
@@ -554,7 +699,8 @@ class StructuredExcelParser {
   private findNextChapterRow(currentRow: number): number {
     for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
       const value = this.getCellValue(row, 1);
-      if (this.isChapterTitle(value)) {
+      const cell = this.getCell(row, 1);
+      if (this.isChapterTitle(value, cell)) {
         return row;
       }
     }
@@ -564,7 +710,8 @@ class StructuredExcelParser {
   private findNextSectionRow(currentRow: number, chapter: Chapter): number {
     for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
       const value = this.getCellValue(row, 1);
-      if (this.isSectionTitle(value) || this.isChapterTitle(value)) {
+      const cell = this.getCell(row, 1);
+      if (this.isSectionTitle(value, cell) || this.isChapterTitle(value, cell)) {
         return row;
       }
     }
@@ -574,7 +721,8 @@ class StructuredExcelParser {
   private findNextSubSectionRow(currentRow: number, section: Section): number {
     for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
       const value = this.getCellValue(row, 1);
-      if (this.isSubSectionTitle(value) || this.isSectionTitle(value) || this.isChapterTitle(value)) {
+      const cell = this.getCell(row, 1);
+      if (this.isSubSectionTitle(value, cell) || this.isSectionTitle(value, cell) || this.isChapterTitle(value, cell)) {
         return row;
       }
     }

@@ -21,6 +21,7 @@ export interface SubSection {
   name: string;
   level: number; // 1, 2, 3, 4 for different hierarchy levels
   symbol: string; // "一、", "1.", "(1)", etc.
+  description?: string[]; // Optional description text
   tableAreas: TableArea[];
   children: SubSection[];
 }
@@ -29,6 +30,7 @@ export interface Section {
   id: string;
   name: string;
   number: string;
+  description?: string[]; // Optional description text
   subSections: SubSection[];
   tableAreas: TableArea[];
 }
@@ -37,6 +39,7 @@ export interface Chapter {
   id: string;
   name: string;
   number: string;
+  description?: string[]; // Optional description text
   sections: Section[];
   tableAreas: TableArea[];
 }

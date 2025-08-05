@@ -8,6 +8,9 @@ import {
   SubSection, 
   TableArea, 
   TableRange, 
+  TableStructure,
+  QuotaCodeInfo,
+  ResourceInfo,
   CellInfo, 
   BorderInfo 
 } from './src/structured-types';
@@ -223,6 +226,262 @@ class StructuredExcelParser {
     return descriptions;
   }
 
+  private parseLeadingElements(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['leadingElements'] {
+    // Look for work content and unit information in the leading rows
+    for (let row = startRow; row <= Math.min(startRow + 3, endRow); row++) {
+      for (let col = startCol; col <= endCol; col++) {
+        const value = this.getCellValue(row, col);
+        
+        // Check for work content pattern
+        if (this.isWorkContent(value)) {
+          return {
+            workContent: value,
+            row: row
+          };
+        }
+        
+        // Check for unit pattern
+        if (value && value.includes('单位') && value.includes('：')) {
+          return {
+            unit: value,
+            row: row
+          };
+        }
+      }
+    }
+    
+    return undefined;
+  }
+
+  private parseQuotaCodesRow(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['quotaCodesRow'] {
+    // Look for quota codes label cell (子目编号, 子目编码) - accounting for extra spaces
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= Math.min(startCol + 2, endCol); col++) {
+        const value = this.getCellValue(row, col);
+        const normalizedValue = value.replace(/\s+/g, ''); // Remove all spaces
+        
+        if (normalizedValue.includes('子目编号') || normalizedValue.includes('子目编码')) {
+          // Found the label cell, now collect quota codes in the same row
+          const quotaCodes: QuotaCodeInfo[] = [];
+          
+          for (let quotaCol = col + 1; quotaCol <= endCol; quotaCol++) {
+            const quotaValue = this.getCellValue(row, quotaCol);
+            if (this.isQuotaCode(quotaValue)) {
+              quotaCodes.push({
+                code: quotaValue,
+                row: row,
+                col: quotaCol
+              });
+            }
+          }
+          
+          if (quotaCodes.length > 0) {
+            return {
+              labelCell: value,
+              quotaCodes: quotaCodes,
+              row: row
+            };
+          }
+        }
+      }
+    }
+    
+    return undefined;
+  }
+
+  private parseQuotaNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodesRow?: number): TableStructure['quotaNamesRows'] {
+    // Look for quota names label cell (子目名称) - accounting for extra spaces
+    let labelRow = -1;
+    let labelCell = '';
+    
+    for (let row = quotaCodesRow ? quotaCodesRow + 1 : startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= Math.min(startCol + 2, endCol); col++) {
+        const value = this.getCellValue(row, col);
+        const normalizedValue = value.replace(/\s+/g, ''); // Remove all spaces
+        
+        if (normalizedValue.includes('子目名称')) {
+          labelRow = row;
+          labelCell = value;
+          break;
+        }
+      }
+      if (labelRow > -1) break;
+    }
+    
+    if (labelRow > -1) {
+      const baseNames: string[] = [];
+      const specs: string[] = [];
+      let hasSpecs = false;
+      
+      // Collect base names from the label row
+      for (let col = startCol + 2; col <= endCol; col++) {
+        const value = this.getCellValue(labelRow, col);
+        if (value && !this.isQuotaCode(value)) {
+          baseNames.push(value);
+        }
+      }
+      
+      // Check the next row for specifications
+      if (labelRow + 1 <= endRow) {
+        for (let col = startCol + 2; col <= endCol; col++) {
+          const value = this.getCellValue(labelRow + 1, col);
+          if (value && !this.isQuotaCode(value)) {
+            specs.push(value);
+            hasSpecs = true;
+          }
+        }
+      }
+      
+      return {
+        labelCell: labelCell,
+        baseNames: baseNames,
+        specs: hasSpecs ? specs : [],
+        startRow: labelRow,
+        endRow: hasSpecs ? labelRow + 1 : labelRow
+      };
+    }
+    
+    return undefined;
+  }
+
+  private parseResourcesSection(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodes: QuotaCodeInfo[]): TableStructure['resourcesSection'] {
+    // Look for resources label cell (人材机名称, 单位, 消耗量) - accounting for extra spaces
+    let resourcesStartRow = -1;
+    let labelCell = '';
+    let unitLabelCell = '';
+    let consumptionLabelCell = '';
+    
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= Math.min(startCol + 3, endCol); col++) {
+        const value = this.getCellValue(row, col);
+        const normalizedValue = value.replace(/\s+/g, ''); // Remove all spaces
+        
+        if (normalizedValue.includes('人材机名称') || normalizedValue === '名称') {
+          resourcesStartRow = row;
+          labelCell = value;
+          
+          // Look for unit and consumption labels in nearby cells
+          for (let nearCol = col + 1; nearCol <= Math.min(col + 15, endCol); nearCol++) {
+            const nearValue = this.getCellValue(row, nearCol);
+            const normalizedNearValue = nearValue.replace(/\s+/g, '');
+            if (normalizedNearValue.includes('单位')) {
+              unitLabelCell = nearValue;
+            }
+            if (normalizedNearValue.includes('消耗量')) {
+              consumptionLabelCell = nearValue;
+            }
+          }
+          break;
+        }
+      }
+      if (resourcesStartRow > -1) break;
+    }
+    
+    if (resourcesStartRow > -1) {
+      const resources: ResourceInfo[] = [];
+      
+      // Parse resource rows starting from the label row + 1
+      let currentCategory = '';
+      for (let row = resourcesStartRow + 1; row <= endRow; row++) {
+        const cellAValue = this.getCellValue(row, startCol);
+        if (!cellAValue) continue;
+        
+        // Check if this is a category header (人工, 材料, 机械)
+        const normalizedCellA = cellAValue.replace(/\s+/g, '');
+        if (normalizedCellA === '人工' || cellAValue.includes('人工')) {
+          currentCategory = '人工';
+          continue; // Skip category headers
+        } else if (normalizedCellA === '材料' || cellAValue.includes('材料')) {
+          currentCategory = '材料';
+          continue; // Skip category headers
+        } else if (normalizedCellA === '机械' || cellAValue.includes('机械')) {
+          currentCategory = '机械';
+          continue; // Skip category headers
+        }
+        
+        // This is a resource item, not a category header
+        const resourceName = cellAValue;
+        
+        // Use current category or try to infer from resource name
+        let category = currentCategory;
+        if (!category) {
+          if (resourceName.includes('工日') || resourceName.includes('综合用工')) {
+            category = '人工';
+          } else if (resourceName.includes('钢') || resourceName.includes('混凝土') || resourceName.includes('水泥')) {
+            category = '材料';
+          } else if (resourceName.includes('台班') || resourceName.includes('起重机')) {
+            category = '机械';
+          } else {
+            category = '其他';
+          }
+        }
+        
+        // Get unit information (usually in column B)
+        const unit = this.getCellValue(row, startCol + 1);
+        
+        // Collect consumption data for each quota code
+        const consumptions: { [quotaCode: string]: number | string } = {};
+        for (const quotaInfo of quotaCodes) {
+          // Find consumption value in the same column as the quota code
+          const consumptionValue = this.getCellValue(row, quotaInfo.col);
+          if (consumptionValue && consumptionValue !== '0' && consumptionValue !== '-' && consumptionValue.trim() !== '') {
+            // Try to parse as number, fallback to string
+            const numValue = parseFloat(consumptionValue);
+            consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValue : numValue;
+          }
+        }
+        
+        if (Object.keys(consumptions).length > 0) {
+          resources.push({
+            category: category,
+            name: resourceName,
+            unit: unit || undefined,
+            consumptions: consumptions,
+            row: row
+          });
+        }
+      }
+      
+      if (resources.length > 0) {
+        return {
+          labelCell: labelCell,
+          unitLabelCell: unitLabelCell || undefined,
+          consumptionLabelCell: consumptionLabelCell || undefined,
+          resources: resources,
+          startRow: resourcesStartRow,
+          endRow: endRow
+        };
+      }
+    }
+    
+    return undefined;
+  }
+
+  private parseTrailingElements(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['trailingElements'] {
+    const notes: string[] = [];
+    const rows: number[] = [];
+    
+    // Look for notes in the trailing rows
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = startCol; col <= endCol; col++) {
+        const value = this.getCellValue(row, col);
+        if (this.isNote(value)) {
+          notes.push(value);
+          rows.push(row);
+        }
+      }
+    }
+    
+    if (notes.length > 0) {
+      return {
+        notes: notes,
+        rows: rows
+      };
+    }
+    
+    return undefined;
+  }
+
   private detectTableAreas(): TableArea[] {
     const tableAreas: TableArea[] = [];
     
@@ -333,6 +592,24 @@ class StructuredExcelParser {
           }
         }
         
+        // Parse detailed table structure - adjust range to include headers properly
+        const tableStartRow = Math.max(1, minRow - 5); // Look a bit above the quota codes
+        const tableEndRow = Math.min(this.data.metadata.totalRows, maxRow + 15); // Look a bit below
+        
+        const leadingElements = this.parseLeadingElements(tableStartRow, tableEndRow, 1, endCol);
+        const quotaCodesRow = this.parseQuotaCodesRow(tableStartRow, tableEndRow, 1, endCol);
+        const quotaNamesRows = this.parseQuotaNamesRows(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow?.row);
+        const resourcesSection = quotaCodesRow ? this.parseResourcesSection(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow.quotaCodes) : undefined;
+        const trailingElements = this.parseTrailingElements(tableStartRow, tableEndRow, 1, endCol);
+
+        const structure: TableStructure = {
+          leadingElements,
+          quotaCodesRow,
+          quotaNamesRows,
+          resourcesSection,
+          trailingElements
+        };
+
         const tableId = `table_${minRow}_${minCol}`;
         const table: TableArea = {
           id: tableId,
@@ -341,7 +618,8 @@ class StructuredExcelParser {
           unit,
           workContent: workContent || undefined, // Make optional
           notes,
-          isContinuation: false
+          isContinuation: false,
+          structure: structure
         };
         
         tableAreas.push(table);
@@ -349,6 +627,23 @@ class StructuredExcelParser {
         console.log(`  Found table at ${startRow}-${endRow}:${startCol}-${endCol} with ${quotaCodes.length} quotas: ${quotaCodes.slice(0, 5).join(', ')}${quotaCodes.length > 5 ? '...' : ''}`);
         if (workContent) console.log(`    Work content: ${workContent.substring(0, 50)}...`);
         if (notes.length > 0) console.log(`    Notes: ${notes.length} found`);
+        
+        // Log detailed structure information
+        if (structure.leadingElements) {
+          console.log(`    Leading elements: ${structure.leadingElements.workContent ? 'work content' : ''}${structure.leadingElements.unit ? 'unit' : ''} at row ${structure.leadingElements.row}`);
+        }
+        if (structure.quotaCodesRow) {
+          console.log(`    Quota codes row: ${structure.quotaCodesRow.quotaCodes.length} codes at row ${structure.quotaCodesRow.row}`);
+        }
+        if (structure.quotaNamesRows) {
+          console.log(`    Quota names: ${structure.quotaNamesRows.baseNames.length} names, ${structure.quotaNamesRows.specs.length} specs`);
+        }
+        if (structure.resourcesSection) {
+          console.log(`    Resources: ${structure.resourcesSection.resources.length} resources from row ${structure.resourcesSection.startRow}`);
+        }
+        if (structure.trailingElements) {
+          console.log(`    Trailing elements: ${structure.trailingElements.notes.length} notes`);
+        }
       }
     }
 
@@ -464,24 +759,17 @@ class StructuredExcelParser {
           console.log(`  Section description: ${description.length} lines`);
         }
       } else if (header.type === 'subsection' && currentSection) {
-        // Collect subsection description
-        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 10));
-        
         currentSubSection = {
           id: `subsection_${currentSection.id}_${header.data.symbol}`,
           name: header.data.name,
           level: 1,
           symbol: header.data.symbol,
-          description: description.length > 0 ? description : undefined,
           tableAreas: [],
           children: []
         };
         currentSection.subSections.push(currentSubSection);
         this.processedRows.add(header.row);
         console.log(`Found subsection: ${header.data.name} (Font: SimHei)`);
-        if (description.length > 0) {
-          console.log(`  Subsection description: ${description.length} lines`);
-        }
       }
     }
 

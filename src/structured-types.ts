@@ -7,7 +7,7 @@ export interface TableRange {
 
 export interface QuotaCodeInfo {
   code: string;
-  name?: string;
+  fullName?: string; // Complete name: ${baseName} ${spec}&${unit}
   baseName?: string;
   spec?: string;
   unit?: string;
@@ -17,9 +17,9 @@ export interface QuotaCodeInfo {
 
 export interface ResourceInfo {
   category: string; // 人工/材料/机械 etc.
-  name: string;
-  unit?: string;
-  consumptions: { [quotaCode: string]: number | string }; // quota code -> consumption amount
+  names: string[]; // Multiple resource names from the same cell
+  units: string[]; // Corresponding units for each name
+  consumptions: Array<{ [quotaCode: string]: number | string }>; // consumption for each name-unit pair
   row: number;
 }
 
@@ -38,8 +38,14 @@ export interface TableStructure {
   
   quotaNamesRows?: {
     labelCell: string; // "子目名称" etc.
-    baseNames: string[]; // first row after label
-    specs: string[];     // second row after label (if exists)
+    quotaNames: Array<{
+      baseName: string;
+      spec?: string;
+      unit?: string;
+      fullName: string; // ${baseName} ${spec}&${unit}
+      quotaCode: string; // corresponding quota code
+      col: number;
+    }>;
     startRow: number;
     endRow: number;
   };

@@ -289,12 +289,12 @@ class StructuredExcelParser {
     return undefined;
   }
 
-  private parseQuotaNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodesRow?: number): TableStructure['quotaNamesRows'] {
+  private parseQuotaNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodesInfo?: Array<QuotaCodeInfo>): TableStructure['quotaNamesRows'] {
     // Look for quota names label cell (子目名称) - accounting for extra spaces
     let labelRow = -1;
     let labelCell = '';
     
-    for (let row = quotaCodesRow ? quotaCodesRow + 1 : startRow; row <= endRow; row++) {
+    for (let row = startRow; row <= endRow; row++) {
       for (let col = startCol; col <= Math.min(startCol + 2, endCol); col++) {
         const value = this.getCellValue(row, col);
         const normalizedValue = value.replace(/\s+/g, ''); // Remove all spaces
@@ -308,36 +308,50 @@ class StructuredExcelParser {
       if (labelRow > -1) break;
     }
     
-    if (labelRow > -1) {
-      const baseNames: string[] = [];
-      const specs: string[] = [];
-      let hasSpecs = false;
+    if (labelRow > -1 && quotaCodesInfo) {
+      const quotaNames: Array<{
+        baseName: string;
+        spec?: string;
+        unit?: string;
+        fullName: string;
+        quotaCode: string;
+        col: number;
+      }> = [];
       
-      // Collect base names from the label row
-      for (let col = startCol + 2; col <= endCol; col++) {
-        const value = this.getCellValue(labelRow, col);
-        if (value && !this.isQuotaCode(value)) {
-          baseNames.push(value);
+      // Process each quota code column to get corresponding names and specs
+      for (const quotaInfo of quotaCodesInfo) {
+        const col = quotaInfo.col;
+        const baseName = this.getCellValue(labelRow, col) || '';
+        const spec = this.getCellValue(labelRow + 1, col) || '';
+        
+        // The unit for quota items is typically "台" or similar, not the consumption header
+        // For most construction quota items, the default unit is "台" (set/unit)
+        const unit = "台"; // Default unit for quota items
+        
+        // Form full name: ${baseName} ${spec}&${unit}
+        let fullName = baseName;
+        if (spec && spec !== baseName) {
+          fullName += ` ${spec}`;
         }
-      }
-      
-      // Check the next row for specifications
-      if (labelRow + 1 <= endRow) {
-        for (let col = startCol + 2; col <= endCol; col++) {
-          const value = this.getCellValue(labelRow + 1, col);
-          if (value && !this.isQuotaCode(value)) {
-            specs.push(value);
-            hasSpecs = true;
-          }
+        if (unit) {
+          fullName += `&${unit}`;
         }
+        
+        quotaNames.push({
+          baseName: baseName,
+          spec: (spec && spec !== baseName) ? spec : undefined,
+          unit: unit,
+          fullName: fullName,
+          quotaCode: quotaInfo.code,
+          col: col
+        });
       }
       
       return {
         labelCell: labelCell,
-        baseNames: baseNames,
-        specs: hasSpecs ? specs : [],
+        quotaNames: quotaNames,
         startRow: labelRow,
-        endRow: hasSpecs ? labelRow + 1 : labelRow
+        endRow: labelRow + 2 // Include potential unit row
       };
     }
     
@@ -383,62 +397,134 @@ class StructuredExcelParser {
       // Parse resource rows starting from the label row + 1
       let currentCategory = '';
       for (let row = resourcesStartRow + 1; row <= endRow; row++) {
-        const cellAValue = this.getCellValue(row, startCol);
-        if (!cellAValue) continue;
+        const categoryCell = this.getCellValue(row, startCol); // Column A - category
+        const namesCell = this.getCellValue(row, startCol + 1); // Column B - names
+        const unitsCell = this.getCellValue(row, startCol + 9); // Column J - units (typically column 10)
+        
+        if (!categoryCell && !namesCell) continue;
+        
+        // Skip label rows
+        const normalizedCategoryCell = categoryCell.replace(/\s+/g, '');
+        if (normalizedCategoryCell.includes('子目编号') || 
+            normalizedCategoryCell.includes('子目名称') || 
+            normalizedCategoryCell.includes('人材机名称')) {
+          continue;
+        }
         
         // Check if this is a category header (人工, 材料, 机械)
-        const normalizedCellA = cellAValue.replace(/\s+/g, '');
-        if (normalizedCellA === '人工' || cellAValue.includes('人工')) {
+        if (normalizedCategoryCell === '人工' || categoryCell.includes('人工')) {
           currentCategory = '人工';
-          continue; // Skip category headers
-        } else if (normalizedCellA === '材料' || cellAValue.includes('材料')) {
+          
+          // Parse resource names from column B
+          if (namesCell) {
+            const names = this.parseMultipleValues(namesCell);
+            const units = this.parseMultipleValues(unitsCell || '');
+            
+            // Collect consumption data for each quota code
+            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            
+            for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
+              const consumptions: { [quotaCode: string]: number | string } = {};
+              
+              for (const quotaInfo of quotaCodes) {
+                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+                const consumptionValues = this.parseMultipleValues(consumptionCell || '');
+                
+                if (consumptionValues[nameIndex] && 
+                    consumptionValues[nameIndex] !== '0' && 
+                    consumptionValues[nameIndex] !== '-') {
+                  const numValue = parseFloat(consumptionValues[nameIndex]);
+                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                }
+              }
+              
+              consumptionsArray.push(consumptions);
+            }
+            
+            if (names.length > 0) {
+              resources.push({
+                category: currentCategory,
+                names: names,
+                units: units,
+                consumptions: consumptionsArray,
+                row: row
+              });
+            }
+          }
+        } else if (normalizedCategoryCell === '材料' || categoryCell.includes('材料')) {
           currentCategory = '材料';
-          continue; // Skip category headers
-        } else if (normalizedCellA === '机械' || cellAValue.includes('机械')) {
+          
+          if (namesCell) {
+            const names = this.parseMultipleValues(namesCell);
+            const units = this.parseMultipleValues(unitsCell || '');
+            
+            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            
+            for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
+              const consumptions: { [quotaCode: string]: number | string } = {};
+              
+              for (const quotaInfo of quotaCodes) {
+                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+                const consumptionValues = this.parseMultipleValues(consumptionCell || '');
+                
+                if (consumptionValues[nameIndex] && 
+                    consumptionValues[nameIndex] !== '0' && 
+                    consumptionValues[nameIndex] !== '-') {
+                  const numValue = parseFloat(consumptionValues[nameIndex]);
+                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                }
+              }
+              
+              consumptionsArray.push(consumptions);
+            }
+            
+            if (names.length > 0) {
+              resources.push({
+                category: currentCategory,
+                names: names,
+                units: units,
+                consumptions: consumptionsArray,
+                row: row
+              });
+            }
+          }
+        } else if (normalizedCategoryCell === '机械' || categoryCell.includes('机械')) {
           currentCategory = '机械';
-          continue; // Skip category headers
-        }
-        
-        // This is a resource item, not a category header
-        const resourceName = cellAValue;
-        
-        // Use current category or try to infer from resource name
-        let category = currentCategory;
-        if (!category) {
-          if (resourceName.includes('工日') || resourceName.includes('综合用工')) {
-            category = '人工';
-          } else if (resourceName.includes('钢') || resourceName.includes('混凝土') || resourceName.includes('水泥')) {
-            category = '材料';
-          } else if (resourceName.includes('台班') || resourceName.includes('起重机')) {
-            category = '机械';
-          } else {
-            category = '其他';
+          
+          if (namesCell) {
+            const names = this.parseMultipleValues(namesCell);
+            const units = this.parseMultipleValues(unitsCell || '');
+            
+            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            
+            for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
+              const consumptions: { [quotaCode: string]: number | string } = {};
+              
+              for (const quotaInfo of quotaCodes) {
+                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+                const consumptionValues = this.parseMultipleValues(consumptionCell || '');
+                
+                if (consumptionValues[nameIndex] && 
+                    consumptionValues[nameIndex] !== '0' && 
+                    consumptionValues[nameIndex] !== '-') {
+                  const numValue = parseFloat(consumptionValues[nameIndex]);
+                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                }
+              }
+              
+              consumptionsArray.push(consumptions);
+            }
+            
+            if (names.length > 0) {
+              resources.push({
+                category: currentCategory,
+                names: names,
+                units: units,
+                consumptions: consumptionsArray,
+                row: row
+              });
+            }
           }
-        }
-        
-        // Get unit information (usually in column B)
-        const unit = this.getCellValue(row, startCol + 1);
-        
-        // Collect consumption data for each quota code
-        const consumptions: { [quotaCode: string]: number | string } = {};
-        for (const quotaInfo of quotaCodes) {
-          // Find consumption value in the same column as the quota code
-          const consumptionValue = this.getCellValue(row, quotaInfo.col);
-          if (consumptionValue && consumptionValue !== '0' && consumptionValue !== '-' && consumptionValue.trim() !== '') {
-            // Try to parse as number, fallback to string
-            const numValue = parseFloat(consumptionValue);
-            consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValue : numValue;
-          }
-        }
-        
-        if (Object.keys(consumptions).length > 0) {
-          resources.push({
-            category: category,
-            name: resourceName,
-            unit: unit || undefined,
-            consumptions: consumptions,
-            row: row
-          });
         }
       }
       
@@ -455,6 +541,18 @@ class StructuredExcelParser {
     }
     
     return undefined;
+  }
+
+  // Helper method to parse multiple values from a single cell
+  private parseMultipleValues(cellValue: string): string[] {
+    if (!cellValue || cellValue.trim() === '') return [];
+    
+    // Split by common separators and clean up
+    const values = cellValue.split(/[,，、\n\r]+/)
+      .map(val => val.trim())
+      .filter(val => val.length > 0);
+      
+    return values;
   }
 
   private parseTrailingElements(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['trailingElements'] {
@@ -598,7 +696,7 @@ class StructuredExcelParser {
         
         const leadingElements = this.parseLeadingElements(tableStartRow, tableEndRow, 1, endCol);
         const quotaCodesRow = this.parseQuotaCodesRow(tableStartRow, tableEndRow, 1, endCol);
-        const quotaNamesRows = this.parseQuotaNamesRows(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow?.row);
+        const quotaNamesRows = this.parseQuotaNamesRows(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow?.quotaCodes);
         const resourcesSection = quotaCodesRow ? this.parseResourcesSection(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow.quotaCodes) : undefined;
         const trailingElements = this.parseTrailingElements(tableStartRow, tableEndRow, 1, endCol);
 
@@ -636,7 +734,7 @@ class StructuredExcelParser {
           console.log(`    Quota codes row: ${structure.quotaCodesRow.quotaCodes.length} codes at row ${structure.quotaCodesRow.row}`);
         }
         if (structure.quotaNamesRows) {
-          console.log(`    Quota names: ${structure.quotaNamesRows.baseNames.length} names, ${structure.quotaNamesRows.specs.length} specs`);
+          console.log(`    Quota names: ${structure.quotaNamesRows.quotaNames.length} quota names parsed`);
         }
         if (structure.resourcesSection) {
           console.log(`    Resources: ${structure.resourcesSection.resources.length} resources from row ${structure.resourcesSection.startRow}`);

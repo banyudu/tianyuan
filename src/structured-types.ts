@@ -20,17 +20,17 @@ export interface ResourceConsumption {
   name: string;
   specification?: string; // 规格
   unit: string;
-  consumption: number;
+  consumption: string; // Keep as string to preserve trailing zeros
   isPrimary: boolean; // True if consumption was wrapped in parentheses
   category: string; // 人工/材料/机械
-  categoryCode: number; // 1=人工, 2=材料, 3=机械, 5=other
+  categoryCode: number; // 1=人工, 2=材料, 3=机械, 5=other (5 for primary resources)
 }
 
 export interface ResourceInfo {
   category: string; // 人工/材料/机械 etc.
   names: string[]; // Multiple resource names from the same cell
   units: string[]; // Corresponding units for each name
-  consumptions: Array<{ [normCode: string]: number | string }>; // consumption for each name-unit pair
+  consumptions: Array<{ [normCode: string]: { value: number; originalString: string; isPrimary: boolean } | number | string }>; // consumption for each name-unit pair
   row: number;
 }
 

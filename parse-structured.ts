@@ -435,7 +435,12 @@ class StructuredExcelParser {
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
-                  consumptions[normInfo.code] = parsedConsumption.consumption;
+                  // Store both the consumption value and primary flag info
+                  consumptions[normInfo.code] = {
+                    value: parsedConsumption.consumption,
+                    originalString: consumptionValues[nameIndex],
+                    isPrimary: parsedConsumption.isPrimary
+                  };
                 }
               }
               
@@ -472,7 +477,12 @@ class StructuredExcelParser {
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
-                  consumptions[normInfo.code] = parsedConsumption.consumption;
+                  // Store both the consumption value and primary flag info
+                  consumptions[normInfo.code] = {
+                    value: parsedConsumption.consumption,
+                    originalString: consumptionValues[nameIndex],
+                    isPrimary: parsedConsumption.isPrimary
+                  };
                 }
               }
               
@@ -509,7 +519,12 @@ class StructuredExcelParser {
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
-                  consumptions[normInfo.code] = parsedConsumption.consumption;
+                  // Store both the consumption value and primary flag info
+                  consumptions[normInfo.code] = {
+                    value: parsedConsumption.consumption,
+                    originalString: consumptionValues[nameIndex],
+                    isPrimary: parsedConsumption.isPrimary
+                  };
                 }
               }
               
@@ -568,17 +583,34 @@ class StructuredExcelParser {
           // Check if this norm has consumption for this resource
           if (consumptionMap[norm.code] !== undefined) {
             const consumptionValue = consumptionMap[norm.code];
-            const parsedConsumption = this.parseConsumptionValue(String(consumptionValue));
             
-            if (parsedConsumption.consumption > 0) {
+            // Handle both old (number/string) and new (object) consumption formats
+            let consumption: string;
+            let isPrimary: boolean;
+            
+            if (typeof consumptionValue === 'object' && consumptionValue !== null && 'value' in consumptionValue) {
+              // New format with consumption object
+              consumption = String(consumptionValue.value);
+              isPrimary = consumptionValue.isPrimary;
+            } else {
+              // Fallback: parse the consumption value directly
+              const parsedConsumption = this.parseConsumptionValue(String(consumptionValue));
+              consumption = parsedConsumption.consumption;
+              isPrimary = parsedConsumption.isPrimary;
+            }
+            
+            if (consumption !== '0' && consumption !== '-') {
+              // If primary resource, set category code to 5
+              const finalCategoryCode = isPrimary ? 5 : categoryCode;
+              
               normResources.push({
                 name: name,
                 specification: '', // Will be filled from other sources if available
                 unit: unit,
-                consumption: parsedConsumption.consumption,
-                isPrimary: parsedConsumption.isPrimary,
+                consumption: consumption,
+                isPrimary: isPrimary,
                 category: resource.category,
-                categoryCode: categoryCode
+                categoryCode: finalCategoryCode
               });
             }
           }
@@ -606,9 +638,9 @@ class StructuredExcelParser {
     return values;
   }
 
-  private parseConsumptionValue(value: string): { consumption: number; isPrimary: boolean } {
+  private parseConsumptionValue(value: string): { consumption: string; isPrimary: boolean } {
     if (!value || value.trim() === '' || value === '-' || value === '0') {
-      return { consumption: 0, isPrimary: false };
+      return { consumption: '0', isPrimary: false };
     }
     
     const trimmedValue = value.trim();
@@ -621,10 +653,9 @@ class StructuredExcelParser {
       ? trimmedValue.slice(1, -1) // Remove parentheses
       : trimmedValue;
     
-    const parsedValue = parseFloat(numericValue);
-    
+    // Keep the original string format to preserve trailing zeros
     return {
-      consumption: isNaN(parsedValue) ? 0 : parsedValue,
+      consumption: numericValue,
       isPrimary
     };
   }

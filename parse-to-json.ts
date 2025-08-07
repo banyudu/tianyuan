@@ -172,12 +172,12 @@ class ExcelToJsonParser {
 
   private getMergedRangeInfo(worksheet: ExcelJS.Worksheet, row: number, col: number): CellData['mergedRange'] | undefined {
     const cell = worksheet.getCell(row, col);
-    
+
     if (cell.isMerged && cell.master && cell.master.address === cell.address) {
       // This is the master cell, find its range
       const merges = (worksheet.model as any).merges || {};
       const cellAddress = cell.address;
-      
+
       // Find the merge range that contains this master cell
       for (const rangeName of Object.keys(merges)) {
         const rangeString = merges[rangeName];
@@ -186,13 +186,13 @@ class ExcelToJsonParser {
           const [startAddr, endAddr] = rangeString.split(':');
           const startCell = worksheet.getCell(startAddr);
           const endCell = worksheet.getCell(endAddr);
-          
+
           if (startCell.address === cellAddress) {
             return {
-              startRow: startCell.row,
-              endRow: endCell.row,
-              startCol: startCell.col,
-              endCol: endCell.col
+              startRow: startCell.row as any as number,
+              endRow: endCell.row as any as number,
+              startCol: startCell.col as any as number,
+              endCol: endCell.col as any as number
             };
           }
         }
@@ -204,10 +204,10 @@ class ExcelToJsonParser {
 
   async parseExcelToJson(inputPath: string, outputPath: string): Promise<void> {
     console.log(`Loading Excel file: ${inputPath}`);
-    
+
     await this.workbook.xlsx.readFile(inputPath);
     const worksheet = this.workbook.worksheets[0];
-    
+
     if (!worksheet) {
       throw new Error('No worksheet found in the Excel file');
     }
@@ -223,18 +223,18 @@ class ExcelToJsonParser {
     // Process only rows and columns that actually contain data to improve performance
     const maxRow = Math.min(worksheet.rowCount, 1000);
     const maxCol = Math.min(worksheet.columnCount, 50);
-    
+
     console.log(`Processing area: ${maxRow} rows x ${maxCol} columns`);
-    
+
     // Iterate through rows and columns
     for (let row = 1; row <= maxRow; row++) {
       const worksheetRow = worksheet.getRow(row);
-      
+
       for (let col = 1; col <= maxCol; col++) {
         const cell = worksheetRow.getCell(col);
         const value = this.getCellValue(cell);
         const cellType = this.getCellType(cell);
-        
+
         // Track actual dimensions (non-empty cells)
         if (value !== null && value !== undefined && value !== '') {
           actualRowCount = Math.max(actualRowCount, row);
@@ -244,7 +244,7 @@ class ExcelToJsonParser {
         // Check if this is a merged cell
         const isMerged = cell.isMerged;
         let mergedRange: CellData['mergedRange'] | undefined;
-        
+
         // For merged cells, only process the master cell once
         if (isMerged) {
           const master = cell.master;
@@ -252,7 +252,7 @@ class ExcelToJsonParser {
             // This is not the master cell, skip it
             continue;
           }
-          
+
           // This is the master cell, find the range
           mergedRange = this.getMergedRangeInfo(worksheet, row, col);
           const rangeKey = master ? master.address : cell.address;
@@ -265,7 +265,7 @@ class ExcelToJsonParser {
         // Only include cells that have content, borders, or are merged
         const hasBorders = this.getBorderInfo(cell);
         const hasContent = value !== null && value !== undefined && value !== '';
-        
+
         if (hasContent || hasBorders.top || hasBorders.bottom || hasBorders.left || hasBorders.right || isMerged) {
           const cellData: CellData = {
             row,
@@ -326,7 +326,7 @@ class ExcelToJsonParser {
 
     // Write JSON file
     fs.writeFileSync(outputPath, JSON.stringify(parsedData, null, 2), 'utf8');
-    
+
     console.log('Excel to JSON conversion completed successfully!');
   }
 }

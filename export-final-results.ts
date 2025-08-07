@@ -16,10 +16,10 @@ class FinalResultsExporter {
   private generateHanLiangBiao(): string {
     console.log('Generating 含量表.csv...');
     const rows: string[] = [];
-    
+
     // Header
     rows.push('编号,名称,规格,单位,单价,含量,主材标记,材料号,材料类别,是否有明细,,,');
-    
+
     // Process all chapters, sections, and norms
     this.structuredData.chapters.forEach(chapter => {
       this.processChapterForHanLiangBiao(chapter, rows);
@@ -73,7 +73,7 @@ class FinalResultsExporter {
             // Format: 编号,名称,规格,单位,单价,含量,主材标记,材料号,材料类别,是否有明细
             const row = [
               norm.code,                                    // 编号
-              this.escapeCsvField(resource.name),           // 名称  
+              this.escapeCsvField(resource.name),           // 名称
               this.escapeCsvField(resource.specification || ''), // 规格
               this.escapeCsvField(resource.unit),           // 单位
               '0',                                          // 单价 (placeholder)
@@ -83,7 +83,7 @@ class FinalResultsExporter {
               resource.categoryCode.toString(),            // 材料类别
               '',                                          // 是否有明细 (empty)
               '',                                          // Empty column
-              '',                                          // Empty column  
+              '',                                          // Empty column
               ''                                           // Empty column
             ];
             rows.push(row.join(','));
@@ -97,17 +97,16 @@ class FinalResultsExporter {
   private generateZiMuXinXi(): string {
     console.log('Generating 子目信息.csv...');
     const rows: string[] = [];
-    
+
     // Header
-    rows.push('序号,符号,定额号,子目名称,单位,基价,人工,材料,机械,图片名称,');
-    
+    rows.push(',定额号,子目名称,单位,基价,人工,材料,机械,图片名称,');
+
     let sequenceNumber = 1;
-    
+
     // Process all chapters
     this.structuredData.chapters.forEach(chapter => {
       // Add chapter header
       rows.push([
-        sequenceNumber++,
         '$',
         '',
         this.escapeCsvField(chapter.name),
@@ -118,7 +117,7 @@ class FinalResultsExporter {
         '',
         ''
       ].join(','));
-      
+
       this.processChapterForZiMuXinXi(chapter, rows, sequenceNumber);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
@@ -128,12 +127,11 @@ class FinalResultsExporter {
 
   private processChapterForZiMuXinXi(chapter: Chapter, rows: string[], startSeqNum: number): void {
     let sequenceNumber = startSeqNum;
-    
+
     // Process sections
     chapter.sections.forEach(section => {
       // Add section header
       rows.push([
-        sequenceNumber++,
         '$$',
         '',
         this.escapeCsvField(section.name),
@@ -144,7 +142,7 @@ class FinalResultsExporter {
         '',
         ''
       ].join(','));
-      
+
       this.processSectionForZiMuXinXi(section, rows, sequenceNumber);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
@@ -152,12 +150,11 @@ class FinalResultsExporter {
 
   private processSectionForZiMuXinXi(section: Section, rows: string[], startSeqNum: number): void {
     let sequenceNumber = startSeqNum;
-    
+
     // Process subsections
     section.subSections.forEach(subSection => {
       // Add subsection header
       rows.push([
-        sequenceNumber++,
         '$$$',
         '',
         this.escapeCsvField(subSection.name),
@@ -168,11 +165,11 @@ class FinalResultsExporter {
         '',
         ''
       ].join(','));
-      
+
       this.processSubSectionForZiMuXinXi(subSection, rows, sequenceNumber);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
-    
+
     // Process table areas directly in section
     section.tableAreas?.forEach(tableArea => {
       this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber);
@@ -182,13 +179,13 @@ class FinalResultsExporter {
 
   private processSubSectionForZiMuXinXi(subSection: SubSection, rows: string[], startSeqNum: number): void {
     let sequenceNumber = startSeqNum;
-    
+
     // Process table areas in subsection
     subSection.tableAreas.forEach(tableArea => {
       this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
-    
+
     // Process children subsections
     subSection.children.forEach(child => {
       this.processSubSectionForZiMuXinXi(child, rows, sequenceNumber);
@@ -198,26 +195,25 @@ class FinalResultsExporter {
 
   private processTableAreaForZiMuXinXi(tableArea: TableArea, rows: string[], startSeqNum: number): void {
     let sequenceNumber = startSeqNum;
-    
+
     // Process norms in this table area
     if (tableArea.norms) {
       tableArea.norms.forEach(norm => {
         // Get the full name from the structure if available
         const fullName = this.getNormFullName(norm, tableArea);
-        
+
         // Calculate totals for 人工, 材料, 机械
         const totals = this.calculateNormTotals(norm);
-        
+
         // Format: 序号,符号,定额号,子目名称,单位,基价,人工,材料,机械,图片名称
         const row = [
-          sequenceNumber++,                            // 序号
-          '$$$$',                                     // 符号 (norm level)
+          '',                                     // 符号 (norm level)
           norm.code,                                  // 定额号
           this.escapeCsvField(fullName),              // 子目名称
           '台',                                       // 单位 (default)
           '',                                         // 基价 (empty for now)
           totals.labor.toFixed(3),                   // 人工
-          totals.materials.toFixed(3),               // 材料  
+          totals.materials.toFixed(3),               // 材料
           totals.machinery.toFixed(3),               // 机械
           ''                                         // 图片名称 (empty)
         ];
@@ -240,11 +236,11 @@ class FinalResultsExporter {
 
   private calculateNormTotals(norm: NormInfo): { labor: number; materials: number; machinery: number } {
     const totals = { labor: 0, materials: 0, machinery: 0 };
-    
+
     if (norm.resources) {
       norm.resources.forEach(resource => {
         const consumption = parseFloat(resource.consumption) || 0;
-        
+
         switch (resource.categoryCode) {
           case 1: // 人工
             totals.labor += consumption;
@@ -252,14 +248,14 @@ class FinalResultsExporter {
           case 2: // 材料
           case 5: // 主材
             totals.materials += consumption;
-            break;  
+            break;
           case 3: // 机械
             totals.machinery += consumption;
             break;
         }
       });
     }
-    
+
     return totals;
   }
 
@@ -277,10 +273,10 @@ class FinalResultsExporter {
   private generateGongZuoNeiRong(): string {
     console.log('Generating 工作内容.csv...');
     const rows: string[] = [];
-    
+
     // Header
     rows.push('编号,工作内容');
-    
+
     // Process all chapters, sections, and table areas to find work content
     this.structuredData.chapters.forEach(chapter => {
       this.processChapterForGongZuoNeiRong(chapter, rows);
@@ -330,7 +326,7 @@ class FinalResultsExporter {
     if (tableArea.workContent && tableArea.workContent.trim()) {
       // Extract norm codes for this work content
       const normCodes = tableArea.normCodes.join(',');
-      
+
       rows.push([
         `"${normCodes}"`,
         this.escapeCsvField(tableArea.workContent)
@@ -338,11 +334,11 @@ class FinalResultsExporter {
     }
 
     // Also check structure for leading elements work content
-    if (tableArea.structure?.leadingElements?.workContent && 
+    if (tableArea.structure?.leadingElements?.workContent &&
         tableArea.structure.leadingElements.workContent.trim()) {
-      
+
       const normCodes = tableArea.normCodes.join(',');
-      
+
       rows.push([
         `"${normCodes}"`,
         this.escapeCsvField(tableArea.structure.leadingElements.workContent)
@@ -354,10 +350,10 @@ class FinalResultsExporter {
   private generateFuZhuXinXi(): string {
     console.log('Generating 附注信息.csv...');
     const rows: string[] = [];
-    
+
     // Header
     rows.push('编号,附注信息');
-    
+
     // Process all chapters, sections, and table areas to find notes
     this.structuredData.chapters.forEach(chapter => {
       this.processChapterForFuZhuXinXi(chapter, rows);
@@ -409,7 +405,7 @@ class FinalResultsExporter {
         if (note.trim()) {
           // Try to extract specific norm code from the note, or use all norms in the table
           const normCode = this.extractNormCodeFromNote(note) || tableArea.normCodes[0] || '';
-          
+
           rows.push([
             this.escapeCsvField(normCode),
             this.escapeCsvField(note)
@@ -419,13 +415,13 @@ class FinalResultsExporter {
     }
 
     // Process notes from structure trailing elements
-    if (tableArea.structure?.trailingElements?.notes && 
+    if (tableArea.structure?.trailingElements?.notes &&
         tableArea.structure.trailingElements.notes.length > 0) {
-      
+
       tableArea.structure.trailingElements.notes.forEach(note => {
         if (note.trim()) {
           const normCode = this.extractNormCodeFromNote(note) || tableArea.normCodes[0] || '';
-          
+
           rows.push([
             this.escapeCsvField(normCode),
             this.escapeCsvField(note)
@@ -444,19 +440,19 @@ class FinalResultsExporter {
   // Utility method to escape CSV fields
   private escapeCsvField(field: string): string {
     if (!field) return '';
-    
+
     // If field contains comma, newline, or quote, wrap in quotes and escape internal quotes
     if (field.includes(',') || field.includes('\n') || field.includes('"')) {
       return `"${field.replace(/"/g, '""')}"`;
     }
-    
+
     return field;
   }
 
   // Generate all CSV files
   public generateCsvFiles(outputDir: string): void {
     console.log(`Generating CSV files to: ${outputDir}`);
-    
+
     // Ensure output directory exists
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
@@ -481,7 +477,7 @@ class FinalResultsExporter {
   // Generate Excel files (3 files total)
   public async generateExcelFiles(outputDir: string): Promise<void> {
     console.log(`Generating Excel files to: ${outputDir}`);
-    
+
     // Ensure output directory exists
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
@@ -490,7 +486,7 @@ class FinalResultsExporter {
     // Generate 含量表.xlsx
     await this.generateHanLiangBiaoExcel(path.join(outputDir, '含量表.xlsx'));
 
-    // Generate 子目信息.xlsx  
+    // Generate 子目信息.xlsx
     await this.generateZiMuXinXiExcel(path.join(outputDir, '子目信息.xlsx'));
 
     // Generate combined 工作内容和附注信息.xlsx with two sheets
@@ -502,11 +498,11 @@ class FinalResultsExporter {
   private async generateHanLiangBiaoExcel(filePath: string): Promise<void> {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('含量表');
-    
+
     // Add header
     const headers = ['编号', '名称', '规格', '单位', '单价', '含量', '主材标记', '材料号', '材料类别', '是否有明细', '', '', ''];
     worksheet.addRow(headers);
-    
+
     // Add data
     const csvContent = this.generateHanLiangBiao();
     const rows = csvContent.split('\n');
@@ -516,18 +512,18 @@ class FinalResultsExporter {
         worksheet.addRow(columns);
       }
     });
-    
+
     await workbook.xlsx.writeFile(filePath);
   }
 
   private async generateZiMuXinXiExcel(filePath: string): Promise<void> {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('子目信息');
-    
+
     // Add header
     const headers = ['序号', '符号', '定额号', '子目名称', '单位', '基价', '人工', '材料', '机械', '图片名称'];
     worksheet.addRow(headers);
-    
+
     // Add data
     const csvContent = this.generateZiMuXinXi();
     const rows = csvContent.split('\n');
@@ -537,17 +533,17 @@ class FinalResultsExporter {
         worksheet.addRow(columns);
       }
     });
-    
+
     await workbook.xlsx.writeFile(filePath);
   }
 
   private async generateCombinedWorkAndNotesExcel(filePath: string): Promise<void> {
     const workbook = new ExcelJS.Workbook();
-    
+
     // Add 工作内容 sheet
     const workSheet = workbook.addWorksheet('工作内容');
     workSheet.addRow(['编号', '工作内容']);
-    
+
     const workContent = this.generateGongZuoNeiRong();
     const workRows = workContent.split('\n');
     workRows.slice(1).forEach(row => {
@@ -556,11 +552,11 @@ class FinalResultsExporter {
         workSheet.addRow(columns);
       }
     });
-    
+
     // Add 附注信息 sheet
     const notesSheet = workbook.addWorksheet('附注信息');
     notesSheet.addRow(['编号', '附注信息']);
-    
+
     const notesContent = this.generateFuZhuXinXi();
     const notesRows = notesContent.split('\n');
     notesRows.slice(1).forEach(row => {
@@ -569,7 +565,7 @@ class FinalResultsExporter {
         notesSheet.addRow(columns);
       }
     });
-    
+
     await workbook.xlsx.writeFile(filePath);
   }
 
@@ -578,10 +574,10 @@ class FinalResultsExporter {
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
-    
+
     for (let i = 0; i < row.length; i++) {
       const char = row[i];
-      
+
       if (char === '"' && !inQuotes) {
         inQuotes = true;
       } else if (char === '"' && inQuotes) {
@@ -598,7 +594,7 @@ class FinalResultsExporter {
         current += char;
       }
     }
-    
+
     result.push(current);
     return result;
   }
@@ -612,17 +608,17 @@ async function main() {
 
   try {
     const exporter = new FinalResultsExporter(inputPath);
-    
+
     // Generate CSV files first for debugging
     exporter.generateCsvFiles(csvOutputDir);
-    
+
     // Generate Excel files
     await exporter.generateExcelFiles(excelOutputDir);
-    
+
     console.log('Final results export completed successfully!');
     console.log(`CSV files saved to: ${csvOutputDir}`);
     console.log(`Excel files saved to: ${excelOutputDir}`);
-    
+
   } catch (error) {
     console.error('Error during final results export:', error);
     process.exit(1);

@@ -9,8 +9,9 @@ import {
   TableArea, 
   TableRange, 
   TableStructure,
-  QuotaCodeInfo,
+  NormInfo,
   ResourceInfo,
+  ResourceConsumption,
   CellInfo, 
   BorderInfo 
 } from './src/structured-types';
@@ -91,7 +92,7 @@ class StructuredExcelParser {
     return /^\(\d+\)/.test(value);
   }
 
-  private isQuotaCode(value: string): boolean {
+  private isNormCode(value: string): boolean {
     return /^\d+[A-Z]-\d+$/.test(value);
   }
 
@@ -217,7 +218,7 @@ class StructuredExcelParser {
         if (!this.isChapterTitle(cellValue, cell) && 
             !this.isSectionTitle(cellValue, cell) && 
             !this.isSubSectionTitle(cellValue, cell) &&
-            !this.isQuotaCode(cellValue)) {
+            !this.isNormCode(cellValue)) {
           descriptions.push(cellValue);
         }
       }
@@ -253,32 +254,32 @@ class StructuredExcelParser {
     return undefined;
   }
 
-  private parseQuotaCodesRow(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['quotaCodesRow'] {
-    // Look for quota codes label cell (子目编号, 子目编码) - accounting for extra spaces
+  private parseNormCodesRow(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['normCodesRow'] {
+    // Look for norm codes label cell (子目编号, 子目编码) - accounting for extra spaces
     for (let row = startRow; row <= endRow; row++) {
       for (let col = startCol; col <= Math.min(startCol + 2, endCol); col++) {
         const value = this.getCellValue(row, col);
         const normalizedValue = value.replace(/\s+/g, ''); // Remove all spaces
         
         if (normalizedValue.includes('子目编号') || normalizedValue.includes('子目编码')) {
-          // Found the label cell, now collect quota codes in the same row
-          const quotaCodes: QuotaCodeInfo[] = [];
+          // Found the label cell, now collect norm codes in the same row
+          const normCodes: NormInfo[] = [];
           
-          for (let quotaCol = col + 1; quotaCol <= endCol; quotaCol++) {
-            const quotaValue = this.getCellValue(row, quotaCol);
-            if (this.isQuotaCode(quotaValue)) {
-              quotaCodes.push({
-                code: quotaValue,
+          for (let normCol = col + 1; normCol <= endCol; normCol++) {
+            const normValue = this.getCellValue(row, normCol);
+            if (this.isNormCode(normValue)) {
+              normCodes.push({
+                code: normValue,
                 row: row,
-                col: quotaCol
+                col: normCol
               });
             }
           }
           
-          if (quotaCodes.length > 0) {
+          if (normCodes.length > 0) {
             return {
               labelCell: value,
-              quotaCodes: quotaCodes,
+              normCodes: normCodes,
               row: row
             };
           }
@@ -289,8 +290,8 @@ class StructuredExcelParser {
     return undefined;
   }
 
-  private parseQuotaNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodesInfo?: Array<QuotaCodeInfo>): TableStructure['quotaNamesRows'] {
-    // Look for quota names label cell (子目名称) - accounting for extra spaces
+  private parseNormNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, normCodesInfo?: Array<NormInfo>): TableStructure['normNamesRows'] {
+    // Look for norm names label cell (子目名称) - accounting for extra spaces
     let labelRow = -1;
     let labelCell = '';
     
@@ -308,25 +309,25 @@ class StructuredExcelParser {
       if (labelRow > -1) break;
     }
     
-    if (labelRow > -1 && quotaCodesInfo) {
-      const quotaNames: Array<{
+    if (labelRow > -1 && normCodesInfo) {
+      const normNames: Array<{
         baseName: string;
         spec?: string;
         unit?: string;
         fullName: string;
-        quotaCode: string;
+        normCode: string;
         col: number;
       }> = [];
       
-      // Process each quota code column to get corresponding names and specs
-      for (const quotaInfo of quotaCodesInfo) {
-        const col = quotaInfo.col;
+      // Process each norm code column to get corresponding names and specs
+      for (const normInfo of normCodesInfo) {
+        const col = normInfo.col;
         const baseName = this.getCellValue(labelRow, col) || '';
         const spec = this.getCellValue(labelRow + 1, col) || '';
         
-        // The unit for quota items is typically "台" or similar, not the consumption header
-        // For most construction quota items, the default unit is "台" (set/unit)
-        const unit = "台"; // Default unit for quota items
+        // The unit for norm items is typically "台" or similar, not the consumption header
+        // For most construction norm items, the default unit is "台" (set/unit)
+        const unit = "台"; // Default unit for norm items
         
         // Form full name: ${baseName} ${spec}&${unit}
         let fullName = baseName;
@@ -337,19 +338,19 @@ class StructuredExcelParser {
           fullName += `&${unit}`;
         }
         
-        quotaNames.push({
+        normNames.push({
           baseName: baseName,
           spec: (spec && spec !== baseName) ? spec : undefined,
           unit: unit,
           fullName: fullName,
-          quotaCode: quotaInfo.code,
+          normCode: normInfo.code,
           col: col
         });
       }
       
       return {
         labelCell: labelCell,
-        quotaNames: quotaNames,
+        normNames: normNames,
         startRow: labelRow,
         endRow: labelRow + 2 // Include potential unit row
       };
@@ -358,7 +359,7 @@ class StructuredExcelParser {
     return undefined;
   }
 
-  private parseResourcesSection(startRow: number, endRow: number, startCol: number, endCol: number, quotaCodes: QuotaCodeInfo[]): TableStructure['resourcesSection'] {
+  private parseResourcesSection(startRow: number, endRow: number, startCol: number, endCol: number, normCodes: NormInfo[]): TableStructure['resourcesSection'] {
     // Look for resources label cell (人材机名称, 单位, 消耗量) - accounting for extra spaces
     let resourcesStartRow = -1;
     let labelCell = '';
@@ -420,21 +421,21 @@ class StructuredExcelParser {
             const names = this.parseMultipleValues(namesCell);
             const units = this.parseMultipleValues(unitsCell || '');
             
-            // Collect consumption data for each quota code
-            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            // Collect consumption data for each norm code
+            const consumptionsArray: Array<{ [normCode: string]: number | string }> = [];
             
             for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
-              const consumptions: { [quotaCode: string]: number | string } = {};
+              const consumptions: { [normCode: string]: number | string } = {};
               
-              for (const quotaInfo of quotaCodes) {
-                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+              for (const normInfo of normCodes) {
+                const consumptionCell = this.getCellValue(row, normInfo.col);
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
                 
                 if (consumptionValues[nameIndex] && 
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
-                  const numValue = parseFloat(consumptionValues[nameIndex]);
-                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                  const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
+                  consumptions[normInfo.code] = parsedConsumption.consumption;
                 }
               }
               
@@ -458,20 +459,20 @@ class StructuredExcelParser {
             const names = this.parseMultipleValues(namesCell);
             const units = this.parseMultipleValues(unitsCell || '');
             
-            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            const consumptionsArray: Array<{ [normCode: string]: number | string }> = [];
             
             for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
-              const consumptions: { [quotaCode: string]: number | string } = {};
+              const consumptions: { [normCode: string]: number | string } = {};
               
-              for (const quotaInfo of quotaCodes) {
-                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+              for (const normInfo of normCodes) {
+                const consumptionCell = this.getCellValue(row, normInfo.col);
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
                 
                 if (consumptionValues[nameIndex] && 
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
-                  const numValue = parseFloat(consumptionValues[nameIndex]);
-                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                  const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
+                  consumptions[normInfo.code] = parsedConsumption.consumption;
                 }
               }
               
@@ -495,20 +496,20 @@ class StructuredExcelParser {
             const names = this.parseMultipleValues(namesCell);
             const units = this.parseMultipleValues(unitsCell || '');
             
-            const consumptionsArray: Array<{ [quotaCode: string]: number | string }> = [];
+            const consumptionsArray: Array<{ [normCode: string]: number | string }> = [];
             
             for (let nameIndex = 0; nameIndex < names.length; nameIndex++) {
-              const consumptions: { [quotaCode: string]: number | string } = {};
+              const consumptions: { [normCode: string]: number | string } = {};
               
-              for (const quotaInfo of quotaCodes) {
-                const consumptionCell = this.getCellValue(row, quotaInfo.col);
+              for (const normInfo of normCodes) {
+                const consumptionCell = this.getCellValue(row, normInfo.col);
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
                 
                 if (consumptionValues[nameIndex] && 
                     consumptionValues[nameIndex] !== '0' && 
                     consumptionValues[nameIndex] !== '-') {
-                  const numValue = parseFloat(consumptionValues[nameIndex]);
-                  consumptions[quotaInfo.code] = isNaN(numValue) ? consumptionValues[nameIndex] : numValue;
+                  const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
+                  consumptions[normInfo.code] = parsedConsumption.consumption;
                 }
               }
               
@@ -543,6 +544,56 @@ class StructuredExcelParser {
     return undefined;
   }
 
+  private buildNormResourceRelationships(normCodes: NormInfo[], resources: ResourceInfo[]): NormInfo[] {
+    // Create a map to store category codes
+    const categoryCodeMap: { [category: string]: number } = {
+      '人工': 1,
+      '材料': 2,
+      '机械': 3,
+    };
+
+    // Build resource consumptions for each norm
+    const updatedNorms: NormInfo[] = normCodes.map(norm => {
+      const normResources: ResourceConsumption[] = [];
+      
+      for (const resource of resources) {
+        const categoryCode = categoryCodeMap[resource.category] || 5;
+        
+        // Process each resource name in this category
+        for (let nameIndex = 0; nameIndex < resource.names.length; nameIndex++) {
+          const name = resource.names[nameIndex];
+          const unit = resource.units[nameIndex] || '';
+          const consumptionMap = resource.consumptions[nameIndex] || {};
+          
+          // Check if this norm has consumption for this resource
+          if (consumptionMap[norm.code] !== undefined) {
+            const consumptionValue = consumptionMap[norm.code];
+            const parsedConsumption = this.parseConsumptionValue(String(consumptionValue));
+            
+            if (parsedConsumption.consumption > 0) {
+              normResources.push({
+                name: name,
+                specification: '', // Will be filled from other sources if available
+                unit: unit,
+                consumption: parsedConsumption.consumption,
+                isPrimary: parsedConsumption.isPrimary,
+                category: resource.category,
+                categoryCode: categoryCode
+              });
+            }
+          }
+        }
+      }
+      
+      return {
+        ...norm,
+        resources: normResources
+      };
+    });
+
+    return updatedNorms;
+  }
+
   // Helper method to parse multiple values from a single cell
   private parseMultipleValues(cellValue: string): string[] {
     if (!cellValue || cellValue.trim() === '') return [];
@@ -553,6 +604,29 @@ class StructuredExcelParser {
       .filter(val => val.length > 0);
       
     return values;
+  }
+
+  private parseConsumptionValue(value: string): { consumption: number; isPrimary: boolean } {
+    if (!value || value.trim() === '' || value === '-' || value === '0') {
+      return { consumption: 0, isPrimary: false };
+    }
+    
+    const trimmedValue = value.trim();
+    
+    // Check if value is wrapped in parentheses (primary resource)
+    const isPrimary = /^\(.*\)$/.test(trimmedValue);
+    
+    // Extract numeric value (remove parentheses if present)
+    const numericValue = isPrimary 
+      ? trimmedValue.slice(1, -1) // Remove parentheses
+      : trimmedValue;
+    
+    const parsedValue = parseFloat(numericValue);
+    
+    return {
+      consumption: isNaN(parsedValue) ? 0 : parsedValue,
+      isPrimary
+    };
   }
 
   private parseTrailingElements(startRow: number, endRow: number, startCol: number, endCol: number): TableStructure['trailingElements'] {
@@ -583,12 +657,12 @@ class StructuredExcelParser {
   private detectTableAreas(): TableArea[] {
     const tableAreas: TableArea[] = [];
     
-    // Strategy 1: Find all quota codes first, then build tables around them
-    const quotaCodeCells: Array<{row: number; col: number; code: string}> = [];
+    // Strategy 1: Find all norm codes first, then build tables around them
+    const normCodeCells: Array<{row: number; col: number; code: string}> = [];
     
     for (const cell of this.data.cells) {
-      if (cell.value && typeof cell.value === 'string' && this.isQuotaCode(cell.value)) {
-        quotaCodeCells.push({
+      if (cell.value && typeof cell.value === 'string' && this.isNormCode(cell.value)) {
+        normCodeCells.push({
           row: cell.row,
           col: cell.col,
           code: cell.value
@@ -596,57 +670,57 @@ class StructuredExcelParser {
       }
     }
     
-    console.log(`Found ${quotaCodeCells.length} quota code cells`);
+    console.log(`Found ${normCodeCells.length} norm code cells`);
     
-    // Group quota codes by proximity (same table)
-    const processedQuotas = new Set<string>();
+    // Group norm codes by proximity (same table)
+    const processedNorms = new Set<string>();
     
-    for (const quotaCell of quotaCodeCells) {
-      const key = `${quotaCell.row}-${quotaCell.col}`;
-      if (processedQuotas.has(key)) continue;
+    for (const normCell of normCodeCells) {
+      const key = `${normCell.row}-${normCell.col}`;
+      if (processedNorms.has(key)) continue;
       
-      // Find the table boundaries around this quota code
-      const tableQuotas: Array<{row: number; col: number; code: string}> = [];
+      // Find the table boundaries around this norm code
+      const tableNorms: Array<{row: number; col: number; code: string}> = [];
       const visitedCells = new Set<string>();
       
-      // Use BFS to find all connected quota codes in the same table structure
-      const queue = [quotaCell];
+      // Use BFS to find all connected norm codes in the same table structure
+      const queue = [normCell];
       visitedCells.add(key);
       
       while (queue.length > 0) {
         const current = queue.shift()!;
-        tableQuotas.push(current);
+        tableNorms.push(current);
         
-        // Look for nearby quota codes within reasonable distance (much smaller radius)
+        // Look for nearby norm codes within reasonable distance (much smaller radius)
         const searchRadius = 8; // cells - reduced for more granular tables
-        for (const otherQuota of quotaCodeCells) {
-          const otherKey = `${otherQuota.row}-${otherQuota.col}`;
+        for (const otherNorm of normCodeCells) {
+          const otherKey = `${otherNorm.row}-${otherNorm.col}`;
           if (visitedCells.has(otherKey)) continue;
           
-          // Check if this quota is within the same table area
-          const rowDistance = Math.abs(otherQuota.row - current.row);
-          const colDistance = Math.abs(otherQuota.col - current.col);
+          // Check if this norm is within the same table area
+          const rowDistance = Math.abs(otherNorm.row - current.row);
+          const colDistance = Math.abs(otherNorm.col - current.col);
           
           // More restrictive conditions for smaller tables
           if (rowDistance <= searchRadius && colDistance <= searchRadius) {
             // Additional check: ensure they're in the same bordered area and close enough
-            if (this.areInSameTable(current, otherQuota) && rowDistance <= 5) {
+            if (this.areInSameTable(current, otherNorm) && rowDistance <= 5) {
               visitedCells.add(otherKey);
-              queue.push(otherQuota);
+              queue.push(otherNorm);
             }
           }
         }
       }
       
-      // Mark all found quotas as processed
-      for (const tq of tableQuotas) {
-        processedQuotas.add(`${tq.row}-${tq.col}`);
+      // Mark all found norms as processed
+      for (const tn of tableNorms) {
+        processedNorms.add(`${tn.row}-${tn.col}`);
       }
       
-      if (tableQuotas.length > 0) {
+      if (tableNorms.length > 0) {
         // Calculate table boundaries
-        const rows = tableQuotas.map(q => q.row);
-        const cols = tableQuotas.map(q => q.col);
+        const rows = tableNorms.map(n => n.row);
+        const cols = tableNorms.map(n => n.col);
         
         const minRow = Math.min(...rows);
         const maxRow = Math.max(...rows);
@@ -660,7 +734,7 @@ class StructuredExcelParser {
         const endCol = Math.min(this.data.metadata.totalCols, maxCol + 5);
         
         // Extract table information
-        const quotaCodes = tableQuotas.map(q => q.code).sort();
+        const normCodes = tableNorms.map(n => n.code).sort();
         let unit = '';
         let workContent = '';
         const notes: string[] = [];
@@ -695,34 +769,41 @@ class StructuredExcelParser {
         const tableEndRow = Math.min(this.data.metadata.totalRows, maxRow + 15); // Look a bit below
         
         const leadingElements = this.parseLeadingElements(tableStartRow, tableEndRow, 1, endCol);
-        const quotaCodesRow = this.parseQuotaCodesRow(tableStartRow, tableEndRow, 1, endCol);
-        const quotaNamesRows = this.parseQuotaNamesRows(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow?.quotaCodes);
-        const resourcesSection = quotaCodesRow ? this.parseResourcesSection(tableStartRow, tableEndRow, 1, endCol, quotaCodesRow.quotaCodes) : undefined;
+        const normCodesRow = this.parseNormCodesRow(tableStartRow, tableEndRow, 1, endCol);
+        const normNamesRows = this.parseNormNamesRows(tableStartRow, tableEndRow, 1, endCol, normCodesRow?.normCodes);
+        const resourcesSection = normCodesRow ? this.parseResourcesSection(tableStartRow, tableEndRow, 1, endCol, normCodesRow.normCodes) : undefined;
         const trailingElements = this.parseTrailingElements(tableStartRow, tableEndRow, 1, endCol);
 
         const structure: TableStructure = {
           leadingElements,
-          quotaCodesRow,
-          quotaNamesRows,
+          normCodesRow,
+          normNamesRows,
           resourcesSection,
           trailingElements
         };
+
+        // Build norm-resource relationships
+        let norms: NormInfo[] | undefined = undefined;
+        if (normCodesRow && resourcesSection) {
+          norms = this.buildNormResourceRelationships(normCodesRow.normCodes, resourcesSection.resources);
+        }
 
         const tableId = `table_${minRow}_${minCol}`;
         const table: TableArea = {
           id: tableId,
           range: { startRow, endRow, startCol, endCol },
-          quotaCodes,
+          normCodes,
           unit,
           workContent: workContent || undefined, // Make optional
           notes,
           isContinuation: false,
-          structure: structure
+          structure: structure,
+          norms: norms
         };
         
         tableAreas.push(table);
         
-        console.log(`  Found table at ${startRow}-${endRow}:${startCol}-${endCol} with ${quotaCodes.length} quotas: ${quotaCodes.slice(0, 5).join(', ')}${quotaCodes.length > 5 ? '...' : ''}`);
+        console.log(`  Found table at ${startRow}-${endRow}:${startCol}-${endCol} with ${normCodes.length} norms: ${normCodes.slice(0, 5).join(', ')}${normCodes.length > 5 ? '...' : ''}`);
         if (workContent) console.log(`    Work content: ${workContent.substring(0, 50)}...`);
         if (notes.length > 0) console.log(`    Notes: ${notes.length} found`);
         
@@ -730,17 +811,21 @@ class StructuredExcelParser {
         if (structure.leadingElements) {
           console.log(`    Leading elements: ${structure.leadingElements.workContent ? 'work content' : ''}${structure.leadingElements.unit ? 'unit' : ''} at row ${structure.leadingElements.row}`);
         }
-        if (structure.quotaCodesRow) {
-          console.log(`    Quota codes row: ${structure.quotaCodesRow.quotaCodes.length} codes at row ${structure.quotaCodesRow.row}`);
+        if (structure.normCodesRow) {
+          console.log(`    Norm codes row: ${structure.normCodesRow.normCodes.length} codes at row ${structure.normCodesRow.row}`);
         }
-        if (structure.quotaNamesRows) {
-          console.log(`    Quota names: ${structure.quotaNamesRows.quotaNames.length} quota names parsed`);
+        if (structure.normNamesRows) {
+          console.log(`    Norm names: ${structure.normNamesRows.normNames.length} norm names parsed`);
         }
         if (structure.resourcesSection) {
           console.log(`    Resources: ${structure.resourcesSection.resources.length} resources from row ${structure.resourcesSection.startRow}`);
         }
         if (structure.trailingElements) {
           console.log(`    Trailing elements: ${structure.trailingElements.notes.length} notes`);
+        }
+        if (norms && norms.length > 0) {
+          const totalResources = norms.reduce((sum, norm) => sum + (norm.resources?.length || 0), 0);
+          console.log(`    Norm-resource relationships: ${norms.length} norms with ${totalResources} total resource consumptions`);
         }
       }
     }
@@ -764,7 +849,7 @@ class StructuredExcelParser {
           // Find the previous table with the same quota codes
           for (let j = i - 1; j >= 0; j--) {
             const prevTable = tableAreas[j];
-            if (prevTable.quotaCodes.some(code => table.quotaCodes.includes(code))) {
+            if (prevTable.normCodes.some(code => table.normCodes.includes(code))) {
               table.continuationOf = prevTable.id;
               break;
             }
@@ -878,7 +963,7 @@ class StructuredExcelParser {
       const tableRow = table.range.startRow;
       let assigned = false;
 
-      console.log(`Assigning table at row ${tableRow} with quotas: ${table.quotaCodes.join(', ')}`);
+      console.log(`Assigning table at row ${tableRow} with norms: ${table.normCodes.join(', ')}`);
 
       // Find the most recent chapter/section/subsection above this table by walking backwards
       let bestChapter: Chapter | null = null;

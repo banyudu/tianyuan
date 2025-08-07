@@ -5,7 +5,7 @@ export interface TableRange {
   endCol: number;
 }
 
-export interface QuotaCodeInfo {
+export interface NormInfo {
   code: string;
   fullName?: string; // Complete name: ${baseName} ${spec}&${unit}
   baseName?: string;
@@ -13,13 +13,24 @@ export interface QuotaCodeInfo {
   unit?: string;
   row: number;
   col: number;
+  resources?: ResourceConsumption[]; // All resource consumptions for this norm
+}
+
+export interface ResourceConsumption {
+  name: string;
+  specification?: string; // 规格
+  unit: string;
+  consumption: number;
+  isPrimary: boolean; // True if consumption was wrapped in parentheses
+  category: string; // 人工/材料/机械
+  categoryCode: number; // 1=人工, 2=材料, 3=机械, 5=other
 }
 
 export interface ResourceInfo {
   category: string; // 人工/材料/机械 etc.
   names: string[]; // Multiple resource names from the same cell
   units: string[]; // Corresponding units for each name
-  consumptions: Array<{ [quotaCode: string]: number | string }>; // consumption for each name-unit pair
+  consumptions: Array<{ [normCode: string]: number | string }>; // consumption for each name-unit pair
   row: number;
 }
 
@@ -30,20 +41,20 @@ export interface TableStructure {
     row: number;
   };
   
-  quotaCodesRow?: {
+  normCodesRow?: {
     labelCell: string; // "子目编号" etc.
-    quotaCodes: QuotaCodeInfo[];
+    normCodes: NormInfo[];
     row: number;
   };
   
-  quotaNamesRows?: {
+  normNamesRows?: {
     labelCell: string; // "子目名称" etc.
-    quotaNames: Array<{
+    normNames: Array<{
       baseName: string;
       spec?: string;
       unit?: string;
       fullName: string; // ${baseName} ${spec}&${unit}
-      quotaCode: string; // corresponding quota code
+      normCode: string; // corresponding norm code
       col: number;
     }>;
     startRow: number;
@@ -68,7 +79,7 @@ export interface TableStructure {
 export interface TableArea {
   id: string;
   range: TableRange;
-  quotaCodes: string[];
+  normCodes: string[];
   unit?: string;
   workContent?: string;  // Optional - not every table has work content
   notes: string[];       // Optional - not every table has notes
@@ -77,6 +88,7 @@ export interface TableArea {
   
   // New detailed structure
   structure?: TableStructure;
+  norms?: NormInfo[]; // All norms in this table with their resource consumptions
 }
 
 export interface SubSection {

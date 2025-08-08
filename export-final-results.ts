@@ -194,8 +194,6 @@ class FinalResultsExporter {
   }
 
   private processTableAreaForZiMuXinXi(tableArea: TableArea, rows: string[], startSeqNum: number): void {
-    let sequenceNumber = startSeqNum;
-
     // Process norms in this table area
     if (tableArea.norms) {
       tableArea.norms.forEach(norm => {
@@ -205,17 +203,19 @@ class FinalResultsExporter {
         // Calculate totals for 人工, 材料, 机械
         const totals = this.calculateNormTotals(norm);
 
-        // Format: 序号,符号,定额号,子目名称,单位,基价,人工,材料,机械,图片名称
+        // Format: 符号,定额号,子目名称,基价,人工,材料,机械,管理费,利润,其他,图片名称,
         const row = [
           '',                                     // 符号 (norm level)
           norm.code,                                  // 定额号
           this.escapeCsvField(fullName),              // 子目名称
-          '台',                                       // 单位 (default)
-          '',                                         // 基价 (empty for now)
-          totals.labor.toFixed(3),                   // 人工
-          totals.materials.toFixed(3),               // 材料
-          totals.machinery.toFixed(3),               // 机械
-          ''                                         // 图片名称 (empty)
+          0, // 基价
+          0, // 人工
+          0, // 材料
+          0, // 机械
+          0, // 管理费
+          0, // 利润
+          0, // 其他
+          '' // 图片名称 (empty)
         ];
         rows.push(row.join(','));
       });

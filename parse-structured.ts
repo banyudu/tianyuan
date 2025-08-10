@@ -343,7 +343,7 @@ class StructuredExcelParser {
       // Process each norm code column to get corresponding names and specs
       for (const normInfo of normCodesInfo) {
         const col = normInfo.col;
-        const baseName = this.getMasterCellValue(labelRow, col) || '';
+        const baseName = (this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, '');
         const spec = this.getMasterCellValue(labelRow + 1, col) || '';
 
         // The unit for norm items is typically "台" or similar, not the consumption header

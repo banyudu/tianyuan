@@ -170,6 +170,9 @@ class FinalResultsExporter {
         '',
         '',
         '',
+        '',
+        '',
+        '',
         ''
       ].join(','));
 
@@ -222,7 +225,8 @@ class FinalResultsExporter {
           0, // 管理费
           0, // 利润
           0, // 其他
-          '' // 图片名称 (empty)
+          '',// 图片名称 (empty)
+          ''
         ];
         rows.push(row.join(','));
       });

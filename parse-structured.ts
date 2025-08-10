@@ -7,29 +7,40 @@ import {
   Section,
   SubSection,
   TableArea,
-  TableRange,
   TableStructure,
   NormInfo,
   ResourceInfo,
   ResourceConsumption,
-  CellInfo,
   BorderInfo
 } from './src/structured-types';
 
 class StructuredExcelParser {
   private data: ParsedExcelData;
   private cellMap: Map<string, CellData>;
+  private masterCellMap: Map<string, CellData>;
   private processedRows: Set<number>;
 
   constructor(jsonData: ParsedExcelData) {
     this.data = jsonData;
     this.cellMap = new Map();
+    this.masterCellMap = new Map()
     this.processedRows = new Set();
 
     // Create cell lookup map
     for (const cell of this.data.cells) {
       this.cellMap.set(`${cell.row}-${cell.col}`, cell);
       this.cellMap.set(cell.address, cell);
+
+      // loop the merged area
+      this.masterCellMap.set(`${cell.row}-${cell.col}`, cell);
+      const mergedRange = cell.mergedRange
+      if (mergedRange) {
+        for (let i = mergedRange.startRow; i <= mergedRange.endRow; i++) {
+          for (let j = mergedRange.startCol; j <= mergedRange.endCol; j++) {
+            this.masterCellMap.set(`${i}-${j}`, cell);
+          }
+        }
+      }
     }
   }
 
@@ -37,8 +48,18 @@ class StructuredExcelParser {
     return this.cellMap.get(`${row}-${col}`);
   }
 
+  private getMasterCell(row: number, col: number): CellData | undefined {
+    return this.masterCellMap.get(`${row}-${col}`);
+  }
+
   private getCellValue(row: number, col: number): string {
     const cell = this.getCell(row, col);
+    if (!cell || !cell.value) return '';
+    return String(cell.value).trim();
+  }
+
+  private getMasterCellValue(row: number, col: number): string {
+    const cell = this.getMasterCell(row, col);
     if (!cell || !cell.value) return '';
     return String(cell.value).trim();
   }
@@ -179,7 +200,7 @@ class StructuredExcelParser {
     let match = value.match(/^([一二三四五六七八九十]+)\s+、\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
-        symbol: match[1] + ' 、',
+        symbol: match[1] + '、',
         name: match[2].trim()
       };
     }
@@ -322,8 +343,8 @@ class StructuredExcelParser {
       // Process each norm code column to get corresponding names and specs
       for (const normInfo of normCodesInfo) {
         const col = normInfo.col;
-        const baseName = this.getCellValue(labelRow, col) || '';
-        const spec = this.getCellValue(labelRow + 1, col) || '';
+        const baseName = this.getMasterCellValue(labelRow, col) || '';
+        const spec = this.getMasterCellValue(labelRow + 1, col) || '';
 
         // The unit for norm items is typically "台" or similar, not the consumption header
         // For most construction norm items, the default unit is "台" (set/unit)

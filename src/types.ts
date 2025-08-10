@@ -184,3 +184,9 @@ export interface 材料表行 {
   材料类别: 材料类别;
   是否有明细: boolean; // 是否有明细
 }
+
+export interface Consumption {
+  value: string // 含量值, use string to preserve trailing zeros
+  originalString: string // 原始字符串
+  isPrimary: boolean // 是否主材
+}

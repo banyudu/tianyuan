@@ -1,0 +1,18 @@
+    {
+      "version": "0.2.0",
+      "configurations": [
+        {
+          "name": "Run current file with tsx",
+          "type": "node",
+          "request": "launch",
+          "program": "${file}",
+          "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/tsx",
+          "console": "integratedTerminal",
+          "internalConsoleOptions": "neverOpen",
+          "skipFiles": [
+            "<node_internals>/**",
+            "${workspaceFolder}/node_modules/**"
+          ]
+        }
+      ]
+    }

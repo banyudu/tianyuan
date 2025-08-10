@@ -99,7 +99,7 @@ class FinalResultsExporter {
     const rows: string[] = [];
 
     // Header
-    rows.push(',定额号,子目名称,单位,基价,人工,材料,机械,图片名称,');
+    rows.push(',定额号,子目名称,基价,人工,材料,机械,管理费,利润,其他,图片名称,');
 
     let sequenceNumber = 1;
 

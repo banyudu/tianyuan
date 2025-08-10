@@ -1,3 +1,5 @@
+import { Consumption } from "./types";
+
 export interface TableRange {
   startRow: number;
   endRow: number;
@@ -30,7 +32,7 @@ export interface ResourceInfo {
   category: string; // 人工/材料/机械 etc.
   names: string[]; // Multiple resource names from the same cell
   units: string[]; // Corresponding units for each name
-  consumptions: Array<{ [normCode: string]: { value: number; originalString: string; isPrimary: boolean } | number | string }>; // consumption for each name-unit pair
+  consumptions: Array<Record<string, Consumption>>; // consumption for each name-unit pair
   row: number;
 }
 
@@ -40,13 +42,13 @@ export interface TableStructure {
     unit?: string;
     row: number;
   };
-  
+
   normCodesRow?: {
     labelCell: string; // "子目编号" etc.
     normCodes: NormInfo[];
     row: number;
   };
-  
+
   normNamesRows?: {
     labelCell: string; // "子目名称" etc.
     normNames: Array<{
@@ -60,16 +62,16 @@ export interface TableStructure {
     startRow: number;
     endRow: number;
   };
-  
+
   resourcesSection?: {
     labelCell: string; // "人材机名称" etc.
-    unitLabelCell?: string; // "单位" 
+    unitLabelCell?: string; // "单位"
     consumptionLabelCell?: string; // "消耗量"
     resources: ResourceInfo[];
     startRow: number;
     endRow: number;
   };
-  
+
   trailingElements?: {
     notes: string[];
     rows: number[];
@@ -85,7 +87,7 @@ export interface TableArea {
   notes: string[];       // Optional - not every table has notes
   isContinuation?: boolean;
   continuationOf?: string;
-  
+
   // New detailed structure
   structure?: TableStructure;
   norms?: NormInfo[]; // All norms in this table with their resource consumptions

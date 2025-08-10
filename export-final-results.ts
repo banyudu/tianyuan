@@ -108,8 +108,12 @@ class FinalResultsExporter {
       // Add chapter header
       rows.push([
         '$',
+        this.escapeCsvField(chapter.number),
+        // this.escapeCsvField(chapter.name),
+        ' ' + this.escapeCsvField(chapter.name),
         '',
-        this.escapeCsvField(chapter.name),
+        '',
+        '',
         '',
         '',
         '',
@@ -133,8 +137,11 @@ class FinalResultsExporter {
       // Add section header
       rows.push([
         '$$',
-        '',
+        this.escapeCsvField(section.number),
         this.escapeCsvField(section.name),
+        '',
+        '',
+        '',
         '',
         '',
         '',
@@ -156,7 +163,7 @@ class FinalResultsExporter {
       // Add subsection header
       rows.push([
         '$$$',
-        '',
+        this.escapeCsvField(subSection.symbol),
         this.escapeCsvField(subSection.name),
         '',
         '',

@@ -14,6 +14,8 @@ import {
   BorderInfo
 } from './src/structured-types';
 
+const chopSpaces = (value: string) => value?.replace(/\s+/g, '')
+
 class StructuredExcelParser {
   private data: ParsedExcelData;
   private cellMap: Map<string, CellData>;
@@ -340,15 +342,26 @@ class StructuredExcelParser {
         col: number;
       }> = [];
 
+      let unit = "";
+
+      // find the unit from the line above the cell of the first norm code
+      const firstNormCell = normCodesInfo?.[0]
+      if (firstNormCell) {
+        const cellAboveTheFirstNormCode = this.getMasterCellValue(firstNormCell.row - 1, firstNormCell.col)
+        // this cell may contains only the unit, or workcontent plus unit, or empty if this table is a continuious table of the last one.
+        // let's find the unit using regexp
+        const unitRegexp = /单\s*位\s*[：:]\s*([^\s]+)\s*/
+        const match = String(cellAboveTheFirstNormCode).match(unitRegexp)
+        if (match?.[1]) {
+          unit = match[1]
+        }
+      }
+
       // Process each norm code column to get corresponding names and specs
       for (const normInfo of normCodesInfo) {
         const col = normInfo.col;
         const baseName = (this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, '');
         const spec = this.getMasterCellValue(labelRow + 1, col) || '';
-
-        // The unit for norm items is typically "台" or similar, not the consumption header
-        // For most construction norm items, the default unit is "台" (set/unit)
-        const unit = "台"; // Default unit for norm items
 
         // Form full name: ${baseName} ${spec}&${unit}
         let fullName = baseName;
@@ -789,12 +802,12 @@ class StructuredExcelParser {
         for (let r = Math.max(1, startRow - 3); r < startRow + 3; r++) {
           for (let c = startCol; c <= endCol; c++) {
             const value = this.getCellValue(r, c);
+            if (value && value.includes('单位') && value.includes('：')) {
+              unit = value;
+            }
             if (this.isWorkContent(value)) {
               workContent = value;
               break;
-            }
-            if (value && value.includes('单位') && value.includes('：')) {
-              unit = value;
             }
           }
           if (workContent) break;

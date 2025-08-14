@@ -303,6 +303,7 @@ class StructuredExcelParser {
       const normNames: Array<{
         baseName: string;
         spec?: string;
+        specUnit?: string
         unit?: string;
         fullName: string;
         normCode: string;
@@ -328,12 +329,31 @@ class StructuredExcelParser {
       for (const normInfo of normCodesInfo) {
         const col = normInfo.col;
         const baseName = (this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, '');
-        const spec = this.getMasterCellValue(labelRow + 1, col) || '';
+        const secondRowValue = this.getMasterCellValue(labelRow + 1, col) || '';
+        const thirdRowValue = this.getMasterCellValue(labelRow + 2, col) || '';
 
-        // Form full name: ${baseName} ${spec}&${unit}
+        // Check if second row is a spec unit (contains parentheses with unit notation)
+        const isSpecUnit = /\([^)]*[a-zA-Z\/]+[^)]*\)/.test(secondRowValue);
+
+        let specUnit = '';
+        let spec = '';
+
+        if (isSpecUnit && thirdRowValue) {
+          // Three-row pattern: BaseName + SpecUnit + Spec
+          specUnit = secondRowValue;
+          spec = thirdRowValue;
+        } else {
+          // Two-row pattern: BaseName + Spec (or BaseName only)
+          spec = secondRowValue;
+        }
+
+        // Form full name: ${baseName} ${specUnit} ${spec}&${unit}
         let fullName = baseName;
         if (unit !== '见表') {
-          if (spec && spec !== baseName) {
+          if (specUnit && specUnit !== baseName) {
+            fullName += ` ${specUnit}`;
+          }
+          if (spec && spec !== baseName && spec !== specUnit) {
             fullName += ` ${spec}`;
           }
           if (unit) {
@@ -345,7 +365,8 @@ class StructuredExcelParser {
 
         normNames.push({
           baseName: baseName,
-          spec: (spec && spec !== baseName) ? spec : undefined,
+          spec: spec && spec !== baseName ? spec : undefined,
+          specUnit: specUnit && specUnit !== baseName ? specUnit : undefined,
           unit: unit,
           fullName: fullName,
           normCode: normInfo.code,

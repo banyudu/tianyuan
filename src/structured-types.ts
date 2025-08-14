@@ -9,8 +9,9 @@ export interface TableRange {
 
 export interface NormInfo {
   code: string;
-  fullName?: string; // Complete name: ${baseName} ${spec}&${unit}
+  fullName?: string; // Complete name: ${baseName} ${specUnit} ${spec}&${unit}
   baseName?: string;
+  specUnit?: string; // Unit specification like "风量(m3/h)"
   spec?: string;
   unit?: string;
   row: number;
@@ -53,9 +54,10 @@ export interface TableStructure {
     labelCell: string; // "子目名称" etc.
     normNames: Array<{
       baseName: string;
+      specUnit?: string; // Unit specification like "风量(m3/h)"
       spec?: string;
       unit?: string;
-      fullName: string; // ${baseName} ${spec}&${unit}
+      fullName: string; // ${baseName} ${specUnit} ${spec}&${unit}
       normCode: string; // corresponding norm code
       col: number;
     }>;

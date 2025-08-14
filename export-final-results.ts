@@ -205,7 +205,7 @@ class FinalResultsExporter {
 
   private processTableAreaForZiMuXinXi(tableArea: TableArea, rows: string[], startSeqNum: number): void {
     // Process norms in this table area
-    if (tableArea.norms) {
+    if (tableArea.norms && !tableArea.isContinuation) {
       tableArea.norms.forEach(norm => {
         // Get the full name from the structure if available
         const fullName = this.getNormFullName(norm, tableArea);

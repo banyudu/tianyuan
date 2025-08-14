@@ -1001,7 +1001,7 @@ class StructuredExcelParser {
       let lastSubSectionRow = -1;
 
       // Walk backwards from the table to find the most recent hierarchy headers
-      for (let row = tableRow - 1; row >= 1; row--) {
+      for (let row = tableRow; row >= 1; row--) {
         const cellValue = this.getCellValue(row, 1);
         const cell = this.getCell(row, 1);
 

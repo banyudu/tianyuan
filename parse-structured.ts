@@ -119,39 +119,6 @@ class StructuredExcelParser {
     return /^\d+[A-Z]-\d+$/.test(value);
   }
 
-  private areInSameTable(quota1: {row: number; col: number}, quota2: {row: number; col: number}): boolean {
-    // Check if two quota codes are in the same table by looking at the area between them
-    const minRow = Math.min(quota1.row, quota2.row);
-    const maxRow = Math.max(quota1.row, quota2.row);
-    const minCol = Math.min(quota1.col, quota2.col);
-    const maxCol = Math.max(quota1.col, quota2.col);
-
-    // Much more restrictive - if they're too far apart, they're likely in different tables
-    if (maxRow - minRow > 8 || maxCol - minCol > 8) {
-      return false;
-    }
-
-    // Check if they're in the same row (horizontal table layout)
-    if (quota1.row === quota2.row) {
-      return true;
-    }
-
-    // For vertical proximity, check if there are connecting cells with borders
-    let hasConnectingBorders = false;
-    for (let r = minRow; r <= maxRow; r++) {
-      for (let c = minCol; c <= maxCol; c++) {
-        const cell = this.getCell(r, c);
-        if (cell && (cell.borderStyles || cell.borders)) {
-          hasConnectingBorders = true;
-          break;
-        }
-      }
-      if (hasConnectingBorders) break;
-    }
-
-    return hasConnectingBorders;
-  }
-
   private isWorkContent(value: string): boolean {
     return value.includes('工作') && value.includes('内容') && value.includes('：');
   }
@@ -239,9 +206,9 @@ class StructuredExcelParser {
       if (cellValue && cell?.font?.name === 'SimSun') {
         // Skip if it looks like a structural element
         if (!this.isChapterTitle(cellValue, cell) &&
-            !this.isSectionTitle(cellValue, cell) &&
-            !this.isSubSectionTitle(cellValue, cell) &&
-            !this.isNormCode(cellValue)) {
+          !this.isSectionTitle(cellValue, cell) &&
+          !this.isSubSectionTitle(cellValue, cell) &&
+          !this.isNormCode(cellValue)) {
           descriptions.push(cellValue);
         }
       }
@@ -365,11 +332,15 @@ class StructuredExcelParser {
 
         // Form full name: ${baseName} ${spec}&${unit}
         let fullName = baseName;
-        if (spec && spec !== baseName) {
-          fullName += ` ${spec}`;
-        }
-        if (unit) {
-          fullName += `&${unit}`;
+        if (unit !== '见表') {
+          if (spec && spec !== baseName) {
+            fullName += ` ${spec}`;
+          }
+          if (unit) {
+            fullName += `&${unit}`;
+          }
+        } else {
+          fullName += `&${spec}`
         }
 
         normNames.push({
@@ -441,8 +412,8 @@ class StructuredExcelParser {
         // Skip label rows
         const normalizedCategoryCell = categoryCell.replace(/\s+/g, '');
         if (normalizedCategoryCell.includes('子目编号') ||
-            normalizedCategoryCell.includes('子目名称') ||
-            normalizedCategoryCell.includes('人材机名称')) {
+          normalizedCategoryCell.includes('子目名称') ||
+          normalizedCategoryCell.includes('人材机名称')) {
           continue;
         }
 
@@ -466,8 +437,8 @@ class StructuredExcelParser {
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
 
                 if (consumptionValues[nameIndex] &&
-                    consumptionValues[nameIndex] !== '0' &&
-                    consumptionValues[nameIndex] !== '-') {
+                  consumptionValues[nameIndex] !== '0' &&
+                  consumptionValues[nameIndex] !== '-') {
 
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
                   // Store both the consumption value and primary flag info
@@ -509,8 +480,8 @@ class StructuredExcelParser {
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
 
                 if (consumptionValues[nameIndex] &&
-                    consumptionValues[nameIndex] !== '0' &&
-                    consumptionValues[nameIndex] !== '-') {
+                  consumptionValues[nameIndex] !== '0' &&
+                  consumptionValues[nameIndex] !== '-') {
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
                   // Store both the consumption value and primary flag info
                   consumptions[normInfo.code] = parsedConsumption
@@ -547,8 +518,8 @@ class StructuredExcelParser {
                 const consumptionValues = this.parseMultipleValues(consumptionCell || '');
 
                 if (consumptionValues[nameIndex] &&
-                    consumptionValues[nameIndex] !== '0' &&
-                    consumptionValues[nameIndex] !== '-') {
+                  consumptionValues[nameIndex] !== '0' &&
+                  consumptionValues[nameIndex] !== '-') {
                   const parsedConsumption = this.parseConsumptionValue(consumptionValues[nameIndex]);
                   // Store both the consumption value and primary flag info
                   consumptions[normInfo.code] = parsedConsumption
@@ -717,7 +688,7 @@ class StructuredExcelParser {
     const tableAreas: TableArea[] = [];
 
     // Strategy 1: Find all norm codes first, then build tables around them
-    const normCodeCells: Array<{row: number; col: number; code: string}> = [];
+    const normCodeCells: Array<{ row: number; col: number; code: string }> = [];
 
     for (const cell of this.data.cells) {
       if (cell.value && typeof cell.value === 'string' && this.isNormCode(cell.value)) {
@@ -739,7 +710,7 @@ class StructuredExcelParser {
       if (processedNorms.has(key)) continue;
 
       // Find the table boundaries around this norm code
-      const tableNorms: Array<{row: number; col: number; code: string}> = [];
+      const tableNorms: Array<{ row: number; col: number; code: string }> = [];
       const visitedCells = new Set<string>();
 
       // Use BFS to find all connected norm codes in the same table structure
@@ -751,22 +722,18 @@ class StructuredExcelParser {
         tableNorms.push(current);
 
         // Look for nearby norm codes within reasonable distance (much smaller radius)
-        const searchRadius = 8; // cells - reduced for more granular tables
         for (const otherNorm of normCodeCells) {
           const otherKey = `${otherNorm.row}-${otherNorm.col}`;
           if (visitedCells.has(otherKey)) continue;
 
           // Check if this norm is within the same table area
           const rowDistance = Math.abs(otherNorm.row - current.row);
-          const colDistance = Math.abs(otherNorm.col - current.col);
 
           // More restrictive conditions for smaller tables
-          if (rowDistance <= searchRadius && colDistance <= searchRadius) {
+          if (rowDistance === 0) {
             // Additional check: ensure they're in the same bordered area and close enough
-            if (this.areInSameTable(current, otherNorm) && rowDistance <= 5) {
-              visitedCells.add(otherKey);
-              queue.push(otherNorm);
-            }
+            visitedCells.add(otherKey);
+            queue.push(otherNorm);
           }
         }
       }
@@ -926,7 +893,7 @@ class StructuredExcelParser {
     let currentSubSection: SubSection | null = null;
 
     // First pass: identify all structural headers
-    const structuralHeaders: Array<{row: number, type: 'chapter' | 'section' | 'subsection', data: any}> = [];
+    const structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> = [];
 
     for (let row = 1; row <= this.data.metadata.totalRows; row++) {
       const cellValue = this.getCellValue(row, 1);
@@ -937,17 +904,17 @@ class StructuredExcelParser {
       if (this.isChapterTitle(cellValue, cell)) {
         const chapterInfo = this.parseChapterTitle(cellValue);
         if (chapterInfo) {
-          structuralHeaders.push({row, type: 'chapter', data: chapterInfo});
+          structuralHeaders.push({ row, type: 'chapter', data: chapterInfo });
         }
       } else if (this.isSectionTitle(cellValue, cell)) {
         const sectionInfo = this.parseSectionTitle(cellValue);
         if (sectionInfo) {
-          structuralHeaders.push({row, type: 'section', data: sectionInfo});
+          structuralHeaders.push({ row, type: 'section', data: sectionInfo });
         }
       } else if (this.isSubSectionTitle(cellValue, cell)) {
         const subSectionInfo = this.parseSubSectionTitle(cellValue);
         if (subSectionInfo) {
-          structuralHeaders.push({row, type: 'subsection', data: subSectionInfo});
+          structuralHeaders.push({ row, type: 'subsection', data: subSectionInfo });
         }
       }
     }

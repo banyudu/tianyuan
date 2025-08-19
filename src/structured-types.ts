@@ -98,16 +98,19 @@ export interface TableArea {
 export interface SubSection {
   id: string;
   name: string;
-  level: number; // 1, 2, 3, 4 for different hierarchy levels
-  symbol: string; // "一、", "1.", "(1)", etc.
+  level: number; // 1, 2, 3, 4 for different hierarchy levels (1=一、, 2=1., 3=(1), 4=①)
+  symbol: string; // "一、", "1.", "(1)", "①", etc.
+  row: number; // Row number where this subsection was found
   tableAreas: TableArea[];
   children: SubSection[];
+  parentId?: string; // ID of parent subsection for multi-level hierarchy
 }
 
 export interface Section {
   id: string;
   name: string;
   number: string;
+  row: number; // Row number where this section was found
   description?: string[]; // Optional description text
   subSections: SubSection[];
   tableAreas: TableArea[];
@@ -117,6 +120,7 @@ export interface Chapter {
   id: string;
   name: string;
   number: string;
+  row: number; // Row number where this chapter was found
   description?: string[]; // Optional description text
   sections: Section[];
   tableAreas: TableArea[];

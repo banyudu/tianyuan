@@ -13,8 +13,11 @@ import {
   ResourceConsumption,
   BorderInfo
 } from './src/structured-types';
+import { ImprovedExcelConverter } from './convert';
 
 const chopSpaces = (value: string) => value?.replace(/\s+/g, '')
+
+const replaceParenthes = (value: string) => value?.replace(/（/g, '(').replace(/）/g, ')')
 
 class StructuredExcelParser {
   private data: ParsedExcelData;
@@ -164,31 +167,54 @@ class StructuredExcelParser {
     return null;
   }
 
-  private parseSubSectionTitle(value: string): { symbol: string; name: string } | null {
-    // Match patterns like "一 、减振装置安装" (with spaces)
+  private parseSubSectionTitle(value: string): { symbol: string; name: string; level: number } | null {
+    // Match patterns like "一 、减振装置安装" (with spaces) - Level 1
     let match = value.match(/^([一二三四五六七八九十]+)\s+、\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
         symbol: match[1] + '、',
-        name: match[2].trim()
+        name: match[2].trim(),
+        level: 1
       };
     }
 
-    // Match patterns like "一、减振装置安装" (without spaces)
+    // Match patterns like "一、减振装置安装" (without spaces) - Level 1
     match = value.match(/^([一二三四五六七八九十]+)、\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
         symbol: match[1] + '、',
-        name: match[2].trim()
+        name: match[2].trim(),
+        level: 1
       };
     }
 
-    // Match patterns like "(1)单杆"
+    // Match numbered patterns like "1.工地运输", "2.底盘、拉盘、卡盘安装及电杆防腐" - Level 2
+    match = value.match(/^(\d+)\.\s*(.+?)(?:\s*·|$)/);
+    if (match) {
+      return {
+        symbol: match[1] + '.',
+        name: match[2].trim(),
+        level: 2
+      };
+    }
+
+    // Match parenthetical patterns like "(1)单杆", "(2)接腿杆", "(3)撑杆及钢圈焊接" - Level 3
     match = value.match(/^\((\d+)\)\s*(.+?)(?:\s*·|$)/);
     if (match) {
       return {
         symbol: `(${match[1]})`,
-        name: match[2].trim()
+        name: match[2].trim(),
+        level: 3
+      };
+    }
+
+    // Match circled number patterns like "①", "②" - Level 4
+    match = value.match(/^([①②③④⑤⑥⑦⑧⑨⑩])\s*(.+?)(?:\s*·|$)/);
+    if (match) {
+      return {
+        symbol: match[1],
+        name: match[2].trim(),
+        level: 4
       };
     }
 
@@ -328,7 +354,7 @@ class StructuredExcelParser {
       // Process each norm code column to get corresponding names and specs
       for (const normInfo of normCodesInfo) {
         const col = normInfo.col;
-        const baseName = (this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, '');
+        const baseName = replaceParenthes((this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, ''));
         const secondRowValue = this.getMasterCellValue(labelRow + 1, col) || '';
         const thirdRowValue = this.getMasterCellValue(labelRow + 2, col) || '';
 
@@ -362,6 +388,8 @@ class StructuredExcelParser {
         } else {
           fullName += `&${spec}`
         }
+
+        fullName = replaceParenthes(fullName)
 
         normNames.push({
           baseName: baseName,
@@ -907,345 +935,275 @@ class StructuredExcelParser {
     }
   }
 
+  private findParentSubSection(section: Section, targetLevel: number): SubSection | null {
+    // Find the most recent subsection at the target level
+    const findInSubSections = (subSections: SubSection[]): SubSection | null => {
+      for (let i = subSections.length - 1; i >= 0; i--) {
+        const sub = subSections[i];
+        if (sub.level === targetLevel) {
+          return sub;
+        }
+        // Recursively search in children
+        const found = findInSubSections(sub.children);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    return findInSubSections(section.subSections);
+  }
+
   private buildHierarchicalStructure(tableAreas: TableArea[]): Chapter[] {
     const chapters: Chapter[] = [];
-    let currentChapter: Chapter | null = null;
-    let currentSection: Section | null = null;
-    let currentSubSection: SubSection | null = null;
+    
+    // Step 1: Detect all structural headers with their row numbers
+    const structuralHeaders = this.detectAllStructuralHeaders();
+    
+    // Step 2: Build hierarchical structure
+    this.buildHierarchy(structuralHeaders, chapters);
+    
+    // Step 3: Assign tables to nearest sections
+    this.assignTablesToSections(tableAreas, structuralHeaders, chapters);
+    
+    return chapters;
+  }
 
-    // First pass: identify all structural headers
-    const structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> = [];
-
+  private detectAllStructuralHeaders(): Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> {
+    const headers: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> = [];
+    
     for (let row = 1; row <= this.data.metadata.totalRows; row++) {
-      const cellValue = this.getCellValue(row, 1);
-      if (!cellValue) continue;
+      for (let col = 1; col <= Math.min(15, this.data.metadata.totalCols); col++) {
+        const cellValue = this.getCellValue(row, col);
+        if (!cellValue) continue;
 
-      const cell = this.getCell(row, 1);
+        const cell = this.getCell(row, col);
 
-      if (this.isChapterTitle(cellValue, cell)) {
-        const chapterInfo = this.parseChapterTitle(cellValue);
-        if (chapterInfo) {
-          structuralHeaders.push({ row, type: 'chapter', data: chapterInfo });
+        // Chapters and sections are typically in column 1
+        if (col === 1) {
+          if (this.isChapterTitle(cellValue, cell)) {
+            const chapterInfo = this.parseChapterTitle(cellValue);
+            if (chapterInfo) {
+              headers.push({ row, type: 'chapter', data: chapterInfo });
+              console.log(`Found chapter at row ${row}: ${chapterInfo.name}`);
+            }
+          } else if (this.isSectionTitle(cellValue, cell)) {
+            const sectionInfo = this.parseSectionTitle(cellValue);
+            if (sectionInfo) {
+              headers.push({ row, type: 'section', data: sectionInfo });
+              console.log(`Found section at row ${row}: ${sectionInfo.name}`);
+            }
+          }
         }
-      } else if (this.isSectionTitle(cellValue, cell)) {
-        const sectionInfo = this.parseSectionTitle(cellValue);
-        if (sectionInfo) {
-          structuralHeaders.push({ row, type: 'section', data: sectionInfo });
-        }
-      } else if (this.isSubSectionTitle(cellValue, cell)) {
-        const subSectionInfo = this.parseSubSectionTitle(cellValue);
-        if (subSectionInfo) {
-          structuralHeaders.push({ row, type: 'subsection', data: subSectionInfo });
+
+        // Subsections can be in any column
+        if (this.isSubSectionTitle(cellValue, cell)) {
+          const subSectionInfo = this.parseSubSectionTitle(cellValue);
+          if (subSectionInfo) {
+            headers.push({ row, type: 'subsection', data: { ...subSectionInfo, col } });
+            console.log(`Found subsection at row ${row}: ${subSectionInfo.name} (level ${subSectionInfo.level})`);
+          }
         }
       }
     }
+    
+    return headers.sort((a, b) => a.row - b.row);
+  }
 
-    // Second pass: build hierarchy with descriptions
-    for (let i = 0; i < structuralHeaders.length; i++) {
-      const header = structuralHeaders[i];
-      const nextHeader = structuralHeaders[i + 1];
-
-      // Calculate description range (between current header and next header)
-      const descriptionStart = header.row + 1;
-      const descriptionEnd = nextHeader ? nextHeader.row - 1 : this.data.metadata.totalRows;
-
+  private buildHierarchy(structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>, chapters: Chapter[]): void {
+    let currentChapter: Chapter | null = null;
+    let currentSection: Section | null = null;
+    
+    for (const header of structuralHeaders) {
       if (header.type === 'chapter') {
-        // Collect chapter description
-        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 20));
-
         currentChapter = {
           id: `chapter_${header.data.number}`,
-          name: header.data.name,
+          name: replaceParenthes(header.data.name).replace(/\s+/g, ''),
           number: header.data.number,
-          description: description.length > 0 ? description : undefined,
+          row: header.row,
           sections: [],
           tableAreas: []
         };
         chapters.push(currentChapter);
         currentSection = null;
-        currentSubSection = null;
         this.processedRows.add(header.row);
-        console.log(`Found chapter: ${header.data.name} (SimHei font confirmed)`);
-        if (description.length > 0) {
-          console.log(`  Chapter description: ${description.length} lines`);
-        }
       } else if (header.type === 'section' && currentChapter) {
-        // Collect section description
-        const description = this.collectDescriptionText(descriptionStart, Math.min(descriptionEnd, descriptionStart + 15));
-
         currentSection = {
           id: `section_${currentChapter.id}_${header.data.symbol}`,
-          name: header.data.name,
+          name: replaceParenthes(header.data.name).replace(/\s+/g, ''),
           number: header.data.symbol,
-          description: description.length > 0 ? description : undefined,
+          row: header.row,
           subSections: [],
           tableAreas: []
         };
         currentChapter.sections.push(currentSection);
-        currentSubSection = null;
         this.processedRows.add(header.row);
-        console.log(`Found section: ${header.data.name} (Font: SimHei)`);
-        if (description.length > 0) {
-          console.log(`  Section description: ${description.length} lines`);
-        }
       } else if (header.type === 'subsection' && currentSection) {
-        currentSubSection = {
-          id: `subsection_${currentSection.id}_${header.data.symbol}`,
-          name: header.data.name,
-          level: 1,
-          symbol: header.data.symbol,
+        const subsectionData = header.data;
+        const newSubSection: SubSection = {
+          id: `subsection_${currentSection.id}_${subsectionData.symbol}`,
+          name: replaceParenthes(subsectionData.name).replace(/\s+/g, ''),
+          level: subsectionData.level,
+          symbol: subsectionData.symbol,
+          row: header.row,
           tableAreas: [],
           children: []
         };
-        currentSection.subSections.push(currentSubSection);
+
+        // Handle multi-level hierarchy
+        if (subsectionData.level === 1) {
+          currentSection.subSections.push(newSubSection);
+        } else if (subsectionData.level > 1) {
+          const parentSubSection = this.findParentSubSection(currentSection, subsectionData.level - 1);
+          if (parentSubSection) {
+            newSubSection.parentId = parentSubSection.id;
+            parentSubSection.children.push(newSubSection);
+          } else {
+            currentSection.subSections.push(newSubSection);
+          }
+        }
+
         this.processedRows.add(header.row);
-        console.log(`Found subsection: ${header.data.name} (Font: SimHei)`);
       }
     }
+  }
 
-    // Assign table areas to appropriate hierarchy levels
+  private assignTablesToSections(tableAreas: TableArea[], structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>, chapters: Chapter[]): void {
     console.log(`Assigning ${tableAreas.length} table areas to hierarchy...`);
 
     for (const table of tableAreas) {
-      const tableRow = table.range.startRow;
-      let assigned = false;
+      // Use the norm code row instead of table startRow for more accurate assignment
+      const normCodeRow = table.structure?.normCodesRow?.row || table.range.startRow;
+      console.log(`Assigning table with norm codes at row ${normCodeRow}, norms: ${table.normCodes.join(', ')}`);
 
-      console.log(`Assigning table at row ${tableRow} with norms: ${table.normCodes.join(', ')}`);
+      // Find the nearest section/subsection above the norm code row
+      this.assignTableToNearestHierarchyLevel(table, normCodeRow, chapters);
+    }
+  }
 
-      // Find the most recent chapter/section/subsection above this table by walking backwards
-      let bestChapter: Chapter | null = null;
-      let bestSection: Section | null = null;
-      let bestSubSection: SubSection | null = null;
+  private assignTableToNearestHierarchyLevel(table: TableArea, normCodeRow: number, chapters: Chapter[]): void {
+    let bestChapter: Chapter | null = null;
+    let bestSection: Section | null = null;
+    let bestSubSection: SubSection | null = null;
+    
+    let minChapterDistance = Infinity;
+    let minSectionDistance = Infinity;
+    let minSubSectionDistance = Infinity;
 
-      let lastChapterRow = -1;
-      let lastSectionRow = -1;
-      let lastSubSectionRow = -1;
-
-      // Walk backwards from the table to find the most recent hierarchy headers
-      for (let row = tableRow; row >= 1; row--) {
-        const cellValue = this.getCellValue(row, 1);
-        const cell = this.getCell(row, 1);
-
-        if (!cellValue) continue;
-
-        // Check for subsection (most specific)
-        if (lastSubSectionRow === -1 && this.isSubSectionTitle(cellValue, cell)) {
-          lastSubSectionRow = row;
-          // Find the corresponding subsection in our hierarchy
-          for (const chapter of chapters) {
-            for (const section of chapter.sections) {
-              for (const subSection of section.subSections) {
-                if (cellValue.includes(subSection.name) || subSection.name.includes(cellValue.substring(0, 10))) {
-                  bestSubSection = subSection;
-                  bestSection = section;
-                  bestChapter = chapter;
-                  break;
-                }
-              }
-              if (bestSubSection) break;
-            }
-            if (bestSubSection) break;
-          }
-        }
-
-        // Check for section (medium specificity)
-        if (lastSectionRow === -1 && this.isSectionTitle(cellValue, cell)) {
-          lastSectionRow = row;
-          // Only update if we haven't found a subsection
-          if (!bestSubSection) {
-            for (const chapter of chapters) {
-              for (const section of chapter.sections) {
-                if (cellValue.includes(section.name) || section.name.includes(cellValue.substring(0, 10))) {
-                  bestSection = section;
-                  bestChapter = chapter;
-                  break;
-                }
-              }
-              if (bestSection) break;
-            }
-          }
-        }
-
-        // Check for chapter (least specific)
-        if (lastChapterRow === -1 && this.isChapterTitle(cellValue, cell)) {
-          lastChapterRow = row;
-          // Only update if we haven't found a section or subsection
-          if (!bestSection && !bestSubSection) {
-            for (const chapter of chapters) {
-              if (cellValue.includes(chapter.name) || chapter.name.includes(cellValue.substring(0, 10))) {
-                bestChapter = chapter;
-                break;
-              }
-            }
-          }
-        }
-
-        // If we've found all levels or gone too far back, stop searching
-        if ((bestSubSection || bestSection || bestChapter) && row < tableRow - 50) {
-          break;
+    // Find the nearest chapter, section, and subsection above the norm code row
+    for (const chapter of chapters) {
+      if (chapter.row < normCodeRow) {
+        const distance = normCodeRow - chapter.row;
+        if (distance < minChapterDistance) {
+          minChapterDistance = distance;
+          bestChapter = chapter;
         }
       }
 
-      // Log what we found
-      console.log(`  Found headers above table at row ${tableRow}:`);
-      console.log(`    Chapter: ${bestChapter?.name || 'None'} (row ${lastChapterRow})`);
-      console.log(`    Section: ${bestSection?.name || 'None'} (row ${lastSectionRow})`);
-      console.log(`    SubSection: ${bestSubSection?.name || 'None'} (row ${lastSubSectionRow})`);
-
-      // Assign to the most specific level found (prefer leaf nodes - subSections)
-      if (bestSubSection) {
-        bestSubSection.tableAreas.push(table);
-        console.log(`  -> Assigned to subsection: ${bestSubSection.name}`);
-        assigned = true;
-      } else if (bestSection) {
-        // If no subsection, assign to section (but prefer creating a default subsection)
-        if (bestSection.subSections.length === 0) {
-          // Create a default subsection for tables without explicit subsections
-          const defaultSubSection: SubSection = {
-            id: `subsection_${bestSection.id}_default`,
-            name: 'Tables',
-            level: 1,
-            symbol: '',
-            tableAreas: [table],
-            children: []
-          };
-          bestSection.subSections.push(defaultSubSection);
-          console.log(`  -> Created default subsection and assigned table to section: ${bestSection.name}`);
-        } else {
-          // Assign to the last subsection in this section
-          const lastSubSection = bestSection.subSections[bestSection.subSections.length - 1];
-          lastSubSection.tableAreas.push(table);
-          console.log(`  -> Assigned to last subsection: ${lastSubSection.name} in section: ${bestSection.name}`);
-        }
-        assigned = true;
-      } else if (bestChapter) {
-        // If no section, assign to chapter (but prefer creating a default section/subsection)
-        if (bestChapter.sections.length === 0) {
-          // Create a default section and subsection
-          const defaultSection: Section = {
-            id: `section_${bestChapter.id}_default`,
-            name: 'Default Section',
-            number: '',
-            subSections: [],
-            tableAreas: []
-          };
-
-          const defaultSubSection: SubSection = {
-            id: `subsection_${defaultSection.id}_default`,
-            name: 'Tables',
-            level: 1,
-            symbol: '',
-            tableAreas: [table],
-            children: []
-          };
-
-          defaultSection.subSections.push(defaultSubSection);
-          bestChapter.sections.push(defaultSection);
-          console.log(`  -> Created default section/subsection and assigned to chapter: ${bestChapter.name}`);
-        } else {
-          // Assign to the last section's last subsection
-          const lastSection = bestChapter.sections[bestChapter.sections.length - 1];
-          if (lastSection.subSections.length === 0) {
-            const defaultSubSection: SubSection = {
-              id: `subsection_${lastSection.id}_default`,
-              name: 'Tables',
-              level: 1,
-              symbol: '',
-              tableAreas: [table],
-              children: []
-            };
-            lastSection.subSections.push(defaultSubSection);
-            console.log(`  -> Created default subsection in last section: ${lastSection.name}`);
-          } else {
-            const lastSubSection = lastSection.subSections[lastSection.subSections.length - 1];
-            lastSubSection.tableAreas.push(table);
-            console.log(`  -> Assigned to last subsection: ${lastSubSection.name}`);
+      for (const section of chapter.sections) {
+        if (section.row < normCodeRow) {
+          const distance = normCodeRow - section.row;
+          if (distance < minSectionDistance) {
+            minSectionDistance = distance;
+            bestSection = section;
           }
         }
-        assigned = true;
+
+        // Search in subsections recursively
+        const foundSubSection = this.findNearestSubSection(section.subSections, normCodeRow);
+        if (foundSubSection) {
+          const distance = normCodeRow - foundSubSection.row;
+          if (distance < minSubSectionDistance) {
+            minSubSectionDistance = distance;
+            bestSubSection = foundSubSection;
+          }
+        }
       }
+    }
 
-      if (!assigned) {
-        console.log(`  -> WARNING: Could not assign table at row ${tableRow}`);
-        // Create a fallback structure
-        if (chapters.length > 0) {
-          const firstChapter = chapters[0];
-          if (firstChapter.sections.length === 0) {
-            const defaultSection: Section = {
-              id: `section_${firstChapter.id}_fallback`,
-              name: 'Fallback Section',
-              number: '',
-              subSections: [],
-              tableAreas: []
-            };
-            firstChapter.sections.push(defaultSection);
-          }
-
-          const lastSection = firstChapter.sections[firstChapter.sections.length - 1];
-          if (lastSection.subSections.length === 0) {
-            const defaultSubSection: SubSection = {
-              id: `subsection_${lastSection.id}_fallback`,
-              name: 'Fallback Tables',
-              level: 1,
-              symbol: '',
-              tableAreas: [],
-              children: []
-            };
-            lastSection.subSections.push(defaultSubSection);
-          }
-
+    // Assign to the most specific (nearest) level found
+    if (bestSubSection) {
+      bestSubSection.tableAreas.push(table);
+      console.log(`  -> Assigned to subsection: ${bestSubSection.name} (distance: ${minSubSectionDistance})`);
+    } else if (bestSection) {
+      // If no subsection found, create a fallback subsection or assign to the section's last subsection
+      if (bestSection.subSections.length > 0) {
+        const lastSubSection = bestSection.subSections[bestSection.subSections.length - 1];
+        lastSubSection.tableAreas.push(table);
+        console.log(`  -> Assigned to section's last subsection: ${lastSubSection.name} (section distance: ${minSectionDistance})`);
+      } else {
+        bestSection.tableAreas?.push(table);
+        console.log(`  -> Assigned to section: ${bestSection.name} (distance: ${minSectionDistance})`);
+      }
+    } else if (bestChapter) {
+      // Fallback to chapter level
+      if (bestChapter.sections.length > 0) {
+        const lastSection = bestChapter.sections[bestChapter.sections.length - 1];
+        if (lastSection.subSections.length > 0) {
           const lastSubSection = lastSection.subSections[lastSection.subSections.length - 1];
           lastSubSection.tableAreas.push(table);
-          console.log(`  -> Fallback: Assigned to subsection in first chapter`);
+          console.log(`  -> Assigned to chapter's last subsection: ${lastSubSection.name} (chapter distance: ${minChapterDistance})`);
+        } else {
+          lastSection.tableAreas?.push(table);
+          console.log(`  -> Assigned to chapter's last section: ${lastSection.name} (chapter distance: ${minChapterDistance})`);
+        }
+      } else {
+        bestChapter.tableAreas?.push(table);
+        console.log(`  -> Assigned to chapter: ${bestChapter.name} (distance: ${minChapterDistance})`);
+      }
+    } else {
+      console.log(`  -> WARNING: Could not find any header above norm code row ${normCodeRow}`);
+      this.assignToFallback(table, chapters);
+    }
+  }
+
+  private findNearestSubSection(subSections: SubSection[], normCodeRow: number): SubSection | null {
+    let nearest: SubSection | null = null;
+    let minDistance = Infinity;
+
+    for (const subSection of subSections) {
+      if (subSection.row < normCodeRow) {
+        const distance = normCodeRow - subSection.row;
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearest = subSection;
+        }
+      }
+
+      // Search in children recursively
+      const childResult = this.findNearestSubSection(subSection.children, normCodeRow);
+      if (childResult && childResult.row < normCodeRow) {
+        const distance = normCodeRow - childResult.row;
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearest = childResult;
         }
       }
     }
 
-    return chapters;
+    return nearest;
   }
 
-  private findRowForText(text: string): number {
-    for (let row = 1; row <= this.data.metadata.totalRows; row++) {
-      const value = this.getCellValue(row, 1);
-      if (value.includes(text)) {
-        return row;
+
+  private assignToFallback(table: TableArea, chapters: Chapter[]): void {
+    if (chapters.length > 0) {
+      const firstChapter = chapters[0];
+      if (firstChapter.sections.length > 0) {
+        const lastSection = firstChapter.sections[firstChapter.sections.length - 1];
+        if (lastSection.subSections.length > 0) {
+          const lastSubSection = lastSection.subSections[lastSection.subSections.length - 1];
+          lastSubSection.tableAreas.push(table);
+          console.log(`  -> Fallback: Assigned to last subsection`);
+        } else {
+          lastSection.tableAreas?.push(table);
+          console.log(`  -> Fallback: Assigned to last section`);
+        }
+      } else {
+        firstChapter.tableAreas?.push(table);
+        console.log(`  -> Fallback: Assigned to first chapter`);
       }
     }
-    return this.data.metadata.totalRows;
   }
 
-  private findNextChapterRow(currentRow: number): number {
-    for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
-      const value = this.getCellValue(row, 1);
-      const cell = this.getCell(row, 1);
-      if (this.isChapterTitle(value, cell)) {
-        return row;
-      }
-    }
-    return this.data.metadata.totalRows;
-  }
-
-  private findNextSectionRow(currentRow: number, chapter: Chapter): number {
-    for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
-      const value = this.getCellValue(row, 1);
-      const cell = this.getCell(row, 1);
-      if (this.isSectionTitle(value, cell) || this.isChapterTitle(value, cell)) {
-        return row;
-      }
-    }
-    return this.data.metadata.totalRows;
-  }
-
-  private findNextSubSectionRow(currentRow: number, section: Section): number {
-    for (let row = currentRow + 1; row <= this.data.metadata.totalRows; row++) {
-      const value = this.getCellValue(row, 1);
-      const cell = this.getCell(row, 1);
-      if (this.isSubSectionTitle(value, cell) || this.isSectionTitle(value, cell) || this.isChapterTitle(value, cell)) {
-        return row;
-      }
-    }
-    return this.data.metadata.totalRows;
-  }
 
   public parseStructure(): StructuredDocument {
     console.log('Starting structured parsing...');
@@ -1272,12 +1230,32 @@ class StructuredExcelParser {
     console.log('Structured parsing completed');
     return structuredDoc;
   }
+
+  // New method to generate improved CSV outputs using the improved converter
+  public async generateImprovedOutputs(inputFilePath: string, outputDir: string = './output'): Promise<void> {
+    console.log('\n=== 生成改进版CSV输出 ===');
+
+    try {
+      const converter = new ImprovedExcelConverter();
+      await converter.loadFile(inputFilePath);
+
+      // Export to the specified output directory
+      const improvedOutputDir = path.join(outputDir, 'csv');
+      await converter.exportToCsv(improvedOutputDir);
+
+      console.log(`改进版CSV文件已生成到: ${improvedOutputDir}`);
+    } catch (error) {
+      console.error('生成改进版CSV输出时发生错误:', error);
+      throw error;
+    }
+  }
 }
 
 // Main execution
 async function main() {
   const inputPath = './output/parsed-excel.json';
   const outputPath = './output/structured-excel.json';
+  const inputExcelPath = './sample/input.xlsx'; // Path to original Excel file
 
   try {
     console.log(`Loading JSON data from: ${inputPath}`);
@@ -1295,6 +1273,13 @@ async function main() {
     // Write structured document
     fs.writeFileSync(outputPath, JSON.stringify(structuredDoc, null, 2), 'utf8');
     console.log(`Structured document saved to: ${outputPath}`);
+
+    // Generate improved CSV outputs with fixed hierarchical structure
+    if (fs.existsSync(inputExcelPath)) {
+      await parser.generateImprovedOutputs(inputExcelPath, outputDir);
+    } else {
+      console.log(`警告: 原始Excel文件未找到 (${inputExcelPath})，跳过改进版CSV生成`);
+    }
 
     // Print summary
     console.log('\n=== PARSING SUMMARY ===');

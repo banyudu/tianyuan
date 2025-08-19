@@ -142,3 +142,4 @@ data
 output
 *.backup.xlsx
 output_final
+output_*

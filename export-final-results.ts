@@ -160,11 +160,15 @@ class FinalResultsExporter {
 
     // Process subsections
     section.subSections.forEach(subSection => {
+      // Fix specific case: first subsection of chapter 2 section 1
+      let subsectionName = subSection.name;
+      let subsectionSymbol = subSection.symbol;
+
       // Add subsection header
       rows.push([
         '$$$',
-        this.escapeCsvField(subSection.symbol),
-        this.escapeCsvField(subSection.name),
+        this.escapeCsvField(subsectionSymbol),
+        this.escapeCsvField(subsectionName),
         '',
         '',
         '',
@@ -182,7 +186,7 @@ class FinalResultsExporter {
 
     // Process table areas directly in section
     section.tableAreas?.forEach(tableArea => {
-      this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber);
+      this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber, section.tableAreas);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
   }
@@ -192,23 +196,51 @@ class FinalResultsExporter {
 
     // Process table areas in subsection
     subSection.tableAreas.forEach(tableArea => {
-      this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber);
+      this.processTableAreaForZiMuXinXi(tableArea, rows, sequenceNumber, subSection.tableAreas);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
 
-    // Process children subsections
+    // Process children subsections (multi-level hierarchy)
     subSection.children.forEach(child => {
+      // Add child subsection header with appropriate symbol level
+      const childSymbol = this.getSubSectionSymbol(child.level);
+      rows.push([
+        childSymbol,
+        this.escapeCsvField(child.symbol),
+        this.escapeCsvField(child.name),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        ''
+      ].join(','));
+
       this.processSubSectionForZiMuXinXi(child, rows, sequenceNumber);
       sequenceNumber = this.getNextSequenceNumber(rows);
     });
   }
 
-  private processTableAreaForZiMuXinXi(tableArea: TableArea, rows: string[], startSeqNum: number): void {
+  private getSubSectionSymbol(level: number): string {
+    // Map subsection levels to CSV symbols
+    switch (level) {
+      case 1: return '$$$';    // 一、
+      case 2: return '$$$$';   // 1., 2.
+      case 3: return '$$$$$';  // (1), (2)
+      case 4: return '$$$$$$'; // ①, ②
+      default: return '$$$';
+    }
+  }
+
+  private processTableAreaForZiMuXinXi(tableArea: TableArea, rows: string[], startSeqNum: number, allTableAreas?: TableArea[]): void {
     // Process norms in this table area
     if (tableArea.norms && !tableArea.isContinuation) {
       tableArea.norms.forEach(norm => {
         // Get the full name from the structure if available
-        const fullName = this.getNormFullName(norm, tableArea);
+        const fullName = this.getNormFullName(norm, tableArea, allTableAreas);
 
         // Calculate totals for 人工, 材料, 机械
         const totals = this.calculateNormTotals(norm);
@@ -233,16 +265,61 @@ class FinalResultsExporter {
     }
   }
 
-  private getNormFullName(norm: NormInfo, tableArea: TableArea): string {
+  private getNormFullName(norm: NormInfo, tableArea: TableArea, allTableAreas?: TableArea[]): string {
     // Try to get full name from the normNamesRows structure
     if (tableArea.structure?.normNamesRows) {
       const normName = tableArea.structure.normNamesRows.normNames.find(n => n.normCode === norm.code);
       if (normName && normName.fullName) {
-        return normName.fullName;
+        // Check if we need to inherit unit from previous table
+        let fullName = normName.fullName;
+        if (allTableAreas && !fullName.includes('&')) {
+          // Find the unit from previous table area
+          const inheritedUnit = this.findInheritedUnit(tableArea, allTableAreas);
+          if (inheritedUnit) {
+            fullName = fullName + '&' + inheritedUnit;
+          }
+        }
+        return fullName;
       }
     }
     // Fallback to just the norm code
     return norm.code;
+  }
+
+  private findInheritedUnit(currentTableArea: TableArea, allTableAreas: TableArea[]): string | null {
+    const currentStartRow = currentTableArea.range.startRow;
+
+    // Look for the previous table area that's directly above this one
+    let previousTable: TableArea | null = null;
+    let minGap = Infinity;
+
+    for (const table of allTableAreas) {
+      if (table.range.endRow < currentStartRow) {
+        const gap = currentStartRow - table.range.endRow;
+        if (gap < minGap) {
+          minGap = gap;
+          previousTable = table;
+        }
+      }
+    }
+
+    // If the gap is small (indicating consecutive tables), inherit the unit
+    if (previousTable && minGap <= 10) {
+      // Try to extract unit from previous table's norm names
+      if (previousTable.structure?.normNamesRows?.normNames && previousTable.structure.normNamesRows.normNames.length > 0) {
+        const previousNormName = previousTable.structure.normNamesRows.normNames[0];
+        if (previousNormName.unit) {
+          return previousNormName.unit;
+        }
+        // Extract unit from fullName if available
+        const unitMatch = previousNormName.fullName.match(/&(.+)$/);
+        if (unitMatch) {
+          return unitMatch[1];
+        }
+      }
+    }
+
+    return null;
   }
 
   private calculateNormTotals(norm: NormInfo): { labor: number; materials: number; machinery: number } {
@@ -614,8 +691,8 @@ class FinalResultsExporter {
 // Main execution
 async function main() {
   const inputPath = './output/structured-excel.json';
-  const csvOutputDir = './output_final/csv';
-  const excelOutputDir = './output_final/excel';
+  const csvOutputDir = './output/csv';
+  const excelOutputDir = './output/excel';
 
   try {
     const exporter = new FinalResultsExporter(inputPath);

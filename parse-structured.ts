@@ -372,14 +372,14 @@ class StructuredExcelParser {
         const names = []
         for (let i = 0; i < normNameRowCount; i++) {
           const name = this.getMasterCellValue(labelRow + i, col) || '';
-          names.push(name.replace(/\s+/g, ''));
+          names.push(name);
         }
 
         if (unitInTable) {
           normUnit = names.pop() as string;
         }
 
-        const baseName = replaceParenthes((names.join(' ')))
+        const baseName = replaceParenthes((names.map(item => item.replace(/\s+/g, '')).join(' ')))
 
         // Form full name: ${baseName} ${specUnit} ${spec}&${unit}
         const fullName = replaceParenthes(`${baseName}&${normUnit}`)

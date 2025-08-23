@@ -24,6 +24,7 @@ class StructuredExcelParser {
   private cellMap: Map<string, CellData>;
   private masterCellMap: Map<string, CellData>;
   private processedRows: Set<number>;
+  private lastTableUnit: string = ''
 
   constructor(jsonData: ParsedExcelData) {
     this.data = jsonData;
@@ -112,6 +113,10 @@ class StructuredExcelParser {
     const hasSpacedSubSectionPattern = /^[一二三四五六七八九十]+\s+、/.test(value);
     if (hasSpacedSubSectionPattern) {
       return true;
+    }
+
+    if (/^\s*\d+\./.test(value)) {
+      return true
     }
 
     // Numbered subsections like "(1)" - but these are rare and should also have SimHei
@@ -306,6 +311,7 @@ class StructuredExcelParser {
     return undefined;
   }
 
+
   private parseNormNamesRows(startRow: number, endRow: number, startCol: number, endCol: number, normCodesInfo?: Array<NormInfo>): TableStructure['normNamesRows'] {
     // Look for norm names label cell (子目名称) - accounting for extra spaces
     let labelRow = -1;
@@ -328,18 +334,21 @@ class StructuredExcelParser {
     if (labelRow > -1 && normCodesInfo) {
       const normNames: Array<{
         baseName: string;
-        spec?: string;
-        specUnit?: string
         unit?: string;
         fullName: string;
         normCode: string;
         col: number;
       }> = [];
 
-      let unit = "";
+      let tableUnit = "";
 
       // find the unit from the line above the cell of the first norm code
       const firstNormCell = normCodesInfo?.[0]
+
+      const normNameLabelCell = this.getMasterCell(firstNormCell.row + 1, firstNormCell.col - 1)
+
+      const normNameRowCount = (normNameLabelCell?.mergedRange?.endRow ?? 0) - (normNameLabelCell?.mergedRange?.startRow ?? 0) + 1
+
       if (firstNormCell) {
         const cellAboveTheFirstNormCode = this.getMasterCellValue(firstNormCell.row - 1, firstNormCell.col)
         // this cell may contains only the unit, or workcontent plus unit, or empty if this table is a continuious table of the last one.
@@ -347,55 +356,37 @@ class StructuredExcelParser {
         const unitRegexp = /单\s*位\s*[：:]\s*([^\s]+)\s*/
         const match = String(cellAboveTheFirstNormCode).match(unitRegexp)
         if (match?.[1]) {
-          unit = match[1]
+          tableUnit = match[1]
+        } else {
+          tableUnit = this.lastTableUnit
         }
       }
 
+      const unitInTable = tableUnit === '见表' && normNameRowCount >= 2
+      this.lastTableUnit = unitInTable ? '' : tableUnit
+
       // Process each norm code column to get corresponding names and specs
       for (const normInfo of normCodesInfo) {
+        let normUnit = tableUnit
         const col = normInfo.col;
-        const baseName = replaceParenthes((this.getMasterCellValue(labelRow, col) || '').replace(/\s+/g, ''));
-        const secondRowValue = this.getMasterCellValue(labelRow + 1, col) || '';
-        const thirdRowValue = this.getMasterCellValue(labelRow + 2, col) || '';
-
-        // Check if second row is a spec unit (contains parentheses with unit notation)
-        const isSpecUnit = /\([^)]*[a-zA-Z\/]+[^)]*\)/.test(secondRowValue);
-
-        let specUnit = '';
-        let spec = '';
-
-        if (isSpecUnit && thirdRowValue) {
-          // Three-row pattern: BaseName + SpecUnit + Spec
-          specUnit = secondRowValue;
-          spec = thirdRowValue;
-        } else {
-          // Two-row pattern: BaseName + Spec (or BaseName only)
-          spec = secondRowValue;
+        const names = []
+        for (let i = 0; i < normNameRowCount; i++) {
+          const name = this.getMasterCellValue(labelRow + i, col) || '';
+          names.push(name.replace(/\s+/g, ''));
         }
+
+        if (unitInTable) {
+          normUnit = names.pop() as string;
+        }
+
+        const baseName = replaceParenthes((names.join(' ')))
 
         // Form full name: ${baseName} ${specUnit} ${spec}&${unit}
-        let fullName = baseName;
-        if (unit !== '见表') {
-          if (specUnit && specUnit !== baseName) {
-            fullName += ` ${specUnit}`;
-          }
-          if (spec && spec !== baseName && spec !== specUnit) {
-            fullName += ` ${spec}`;
-          }
-          if (unit) {
-            fullName += `&${unit}`;
-          }
-        } else {
-          fullName += `&${spec}`
-        }
-
-        fullName = replaceParenthes(fullName)
+        const fullName = replaceParenthes(`${baseName}&${normUnit}`)
 
         normNames.push({
           baseName: baseName,
-          spec: spec && spec !== baseName ? spec : undefined,
-          specUnit: specUnit && specUnit !== baseName ? specUnit : undefined,
-          unit: unit,
+          unit: normUnit,
           fullName: fullName,
           normCode: normInfo.code,
           col: col
@@ -955,22 +946,22 @@ class StructuredExcelParser {
 
   private buildHierarchicalStructure(tableAreas: TableArea[]): Chapter[] {
     const chapters: Chapter[] = [];
-    
+
     // Step 1: Detect all structural headers with their row numbers
     const structuralHeaders = this.detectAllStructuralHeaders();
-    
+
     // Step 2: Build hierarchical structure
     this.buildHierarchy(structuralHeaders, chapters);
-    
+
     // Step 3: Assign tables to nearest sections
     this.assignTablesToSections(tableAreas, structuralHeaders, chapters);
-    
+
     return chapters;
   }
 
   private detectAllStructuralHeaders(): Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> {
     const headers: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }> = [];
-    
+
     for (let row = 1; row <= this.data.metadata.totalRows; row++) {
       for (let col = 1; col <= Math.min(15, this.data.metadata.totalCols); col++) {
         const cellValue = this.getCellValue(row, col);
@@ -1005,14 +996,14 @@ class StructuredExcelParser {
         }
       }
     }
-    
+
     return headers.sort((a, b) => a.row - b.row);
   }
 
   private buildHierarchy(structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>, chapters: Chapter[]): void {
     let currentChapter: Chapter | null = null;
     let currentSection: Section | null = null;
-    
+
     for (const header of structuralHeaders) {
       if (header.type === 'chapter') {
         currentChapter = {
@@ -1084,7 +1075,7 @@ class StructuredExcelParser {
     let bestChapter: Chapter | null = null;
     let bestSection: Section | null = null;
     let bestSubSection: SubSection | null = null;
-    
+
     let minChapterDistance = Infinity;
     let minSectionDistance = Infinity;
     let minSubSectionDistance = Infinity;

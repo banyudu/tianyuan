@@ -70,20 +70,6 @@ class StructuredExcelParser {
     return String(cell.value).trim();
   }
 
-  private getBorderInfo(cell: CellData): BorderInfo {
-    const borders = cell.borderStyles || {};
-    return {
-      hasTop: !!(borders.top?.style),
-      hasBottom: !!(borders.bottom?.style),
-      hasLeft: !!(borders.left?.style),
-      hasRight: !!(borders.right?.style),
-      topStyle: borders.top?.style,
-      bottomStyle: borders.bottom?.style,
-      leftStyle: borders.left?.style,
-      rightStyle: borders.right?.style
-    };
-  }
-
   private isChapterTitle(value: string, cell?: CellData): boolean {
     const hasChapterPattern = /^第[一二三四五六七八九十\d]+章/.test(value);
     if (!cell || !hasChapterPattern) return hasChapterPattern;
@@ -106,7 +92,7 @@ class StructuredExcelParser {
   private isSubSectionTitle(value: string, cell?: CellData): boolean {
     // Only consider subsection titles that use SimHei font (structural headers)
     if (cell?.font?.name !== 'SimHei') {
-      return false;
+      return /^\(\d+\)/.test(value);
     }
 
     // Subsection titles with spaces like "一 、减振装置安装" use SimHei font
@@ -119,7 +105,7 @@ class StructuredExcelParser {
       return true
     }
 
-    // Numbered subsections like "(1)" - but these are rare and should also have SimHei
+    // Numbered subsections like "(1)"
     return /^\(\d+\)/.test(value);
   }
 
@@ -370,7 +356,13 @@ class StructuredExcelParser {
         let normUnit = tableUnit
         const col = normInfo.col;
         const names = []
+        const usedAddrs = new Set()
         for (let i = 0; i < normNameRowCount; i++) {
+          const masterCell = this.getMasterCell(labelRow + i, col);
+          if (usedAddrs.has(masterCell?.address)) {
+            continue;
+          }
+          usedAddrs.add(masterCell?.address)
           const name = this.getMasterCellValue(labelRow + i, col) || '';
           names.push(name);
         }

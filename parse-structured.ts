@@ -15,7 +15,7 @@ import {
 } from './src/structured-types';
 import { ImprovedExcelConverter } from './convert';
 
-const chopSpaces = (value: string) => value?.replace(/\s+/g, '')
+const chopSpaces = (value: string) => value?.replace(/[\t ]+/g, '').replace(/\s+/g, ' ')
 
 const replaceParenthes = (value: string) => value?.replace(/（/g, '(').replace(/）/g, ')')
 
@@ -371,7 +371,7 @@ class StructuredExcelParser {
           normUnit = names.pop() as string;
         }
 
-        const baseName = replaceParenthes((names.map(item => item.replace(/\s+/g, '')).join(' ')))
+        const baseName = replaceParenthes((names.map(chopSpaces).join(' ')))
 
         // Form full name: ${baseName} ${specUnit} ${spec}&${unit}
         const fullName = replaceParenthes(`${baseName}&${normUnit}`)
@@ -918,32 +918,13 @@ class StructuredExcelParser {
     }
   }
 
-  private findParentSubSection(section: Section, targetLevel: number): SubSection | null {
-    // Find the most recent subsection at the target level
-    const findInSubSections = (subSections: SubSection[]): SubSection | null => {
-      for (let i = subSections.length - 1; i >= 0; i--) {
-        const sub = subSections[i];
-        if (sub.level === targetLevel) {
-          return sub;
-        }
-        // Recursively search in children
-        const found = findInSubSections(sub.children);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    return findInSubSections(section.subSections);
-  }
 
   private buildHierarchicalStructure(tableAreas: TableArea[]): Chapter[] {
-    const chapters: Chapter[] = [];
-
     // Step 1: Detect all structural headers with their row numbers
     const structuralHeaders = this.detectAllStructuralHeaders();
 
     // Step 2: Build hierarchical structure
-    this.buildHierarchy(structuralHeaders, chapters);
+    const chapters = this.buildHierarchy(structuralHeaders);
 
     // Step 3: Assign tables to nearest sections
     this.assignTablesToSections(tableAreas, structuralHeaders, chapters);
@@ -992,9 +973,11 @@ class StructuredExcelParser {
     return headers.sort((a, b) => a.row - b.row);
   }
 
-  private buildHierarchy(structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>, chapters: Chapter[]): void {
+  private buildHierarchy(structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>): Chapter[] {
+    const chapters: Chapter[] = []
     let currentChapter: Chapter | null = null;
     let currentSection: Section | null = null;
+    const subsectionStack: SubSection[] = []; // Stack to track subsection hierarchy
 
     for (const header of structuralHeaders) {
       if (header.type === 'chapter') {
@@ -1008,6 +991,7 @@ class StructuredExcelParser {
         };
         chapters.push(currentChapter);
         currentSection = null;
+        subsectionStack.length = 0; // Clear subsection stack
         this.processedRows.add(header.row);
       } else if (header.type === 'section' && currentChapter) {
         currentSection = {
@@ -1019,6 +1003,7 @@ class StructuredExcelParser {
           tableAreas: []
         };
         currentChapter.sections.push(currentSection);
+        subsectionStack.length = 0; // Clear subsection stack
         this.processedRows.add(header.row);
       } else if (header.type === 'subsection' && currentSection) {
         const subsectionData = header.data;
@@ -1032,22 +1017,29 @@ class StructuredExcelParser {
           children: []
         };
 
-        // Handle multi-level hierarchy
-        if (subsectionData.level === 1) {
-          currentSection.subSections.push(newSubSection);
-        } else if (subsectionData.level > 1) {
-          const parentSubSection = this.findParentSubSection(currentSection, subsectionData.level - 1);
-          if (parentSubSection) {
-            newSubSection.parentId = parentSubSection.id;
-            parentSubSection.children.push(newSubSection);
-          } else {
-            currentSection.subSections.push(newSubSection);
-          }
+        // Pop subsections from stack that are at same or higher level
+        while (subsectionStack.length > 0 && subsectionStack[subsectionStack.length - 1].level >= subsectionData.level) {
+          subsectionStack.pop();
         }
 
+        // Attach to appropriate parent
+        if (subsectionStack.length === 0) {
+          // No parent subsection, attach directly to section
+          currentSection.subSections.push(newSubSection);
+        } else {
+          // Attach to the last subsection in stack (which is the parent)
+          const parentSubSection = subsectionStack[subsectionStack.length - 1];
+          newSubSection.parentId = parentSubSection.id;
+          parentSubSection.children.push(newSubSection);
+        }
+
+        // Add to stack for potential children
+        subsectionStack.push(newSubSection);
         this.processedRows.add(header.row);
       }
     }
+
+    return chapters
   }
 
   private assignTablesToSections(tableAreas: TableArea[], structuralHeaders: Array<{ row: number, type: 'chapter' | 'section' | 'subsection', data: any }>, chapters: Chapter[]): void {
